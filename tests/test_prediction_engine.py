@@ -32,6 +32,16 @@ class PredictionEngineTests(unittest.TestCase):
         self.assertIn("over25", data["predictions"])
         self.assertIn("btts", data["predictions"])
         self.assertIn("htft", data["predictions"])
+        markets = data["market_probabilities"]
+        self.assertEqual(set(markets["match_result"]), {"1", "X", "2"})
+        self.assertEqual(set(markets["goals"]), {"0.5", "1.5", "2.5", "3.5", "4.5"})
+        self.assertEqual(set(markets["btts"]), {"Var", "Yok"})
+        self.assertIsNotNone(markets["first_half_result"])
+        self.assertEqual(set(markets["htft"]), {"1/1", "1/X", "1/2", "X/1", "X/X", "X/2", "2/1", "2/X", "2/2"})
+        self.assertFalse(markets["corners"]["available"])
+        for value in markets["match_result"].values():
+            self.assertGreaterEqual(value, 0)
+            self.assertLessEqual(value, 1)
 
 if __name__ == "__main__":
     unittest.main()
