@@ -5,6 +5,7 @@ import hashlib
 import hmac
 from datetime import datetime, timedelta
 from functools import wraps
+from urllib.parse import urlsplit
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, current_app
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -12,18 +13,31 @@ from werkzeug.security import check_password_hash, generate_password_hash
 auth_bp = Blueprint("auth", __name__)
 
 
+class _SQLiteConnectionContext:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return self.connection.__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.connection.close()
+
+
 def _db():
     url = os.environ.get("DATABASE_URL", "").strip()
     if url:
         import psycopg
         from psycopg.rows import dict_row
-        conn = psycopg.connect(url, connect_timeout=10, row_factory=dict_row)
-        return conn
+        return psycopg.connect(url, connect_timeout=10, row_factory=dict_row)
     path = os.environ.get("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "src_match_analyst.db"))
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     _execute(conn, "PRAGMA foreign_keys=ON")
-    return conn
+    return _SQLiteConnectionContext(conn)
 
 
 def _execute(conn, query, params=()):
@@ -81,9 +95,9 @@ def _record_auth_failure(email):
 
 
 def _clear_auth_failures(email):
+    # Keep the IP counter so a successful login to another account cannot reset it.
     with _db() as conn:
-        for kind, value in (("email", email), ("ip", request.remote_addr or "unknown")):
-            _execute(conn, "DELETE FROM auth_attempts WHERE key_hash=?", (_rate_key(kind, value),))
+        _execute(conn, "DELETE FROM auth_attempts WHERE key_hash=?", (_rate_key("email", email),))
 
 
 def _init_rate_limit_table():
@@ -96,6 +110,16 @@ def _init_rate_limit_table():
                 id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL, attempted_at TEXT NOT NULL)""")
         _execute(conn, "CREATE INDEX IF NOT EXISTS idx_auth_attempts_key_time ON auth_attempts(key_hash,attempted_at)")
 
+
+
+
+def _safe_next_target(target):
+    if not target or "\\" in target or any(ord(char) < 32 for char in target):
+        return url_for("index")
+    parsed = urlsplit(target)
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/") or parsed.path.startswith("//"):
+        return url_for("index")
+    return target
 
 
 def current_user_id():
@@ -129,15 +153,23 @@ def register():
     if request.method == "POST":
         email = request.form.get("email", "").strip().casefold()
         password = request.form.get("password", "")
-        if len(email) > 254 or "@" not in email:
+        if _auth_rate_limited(email):
+            flash("Çok fazla deneme yapıldı. 15 dakika sonra tekrar deneyin.", "error")
+            return render_template("auth.html", mode="register"), 429
+        local, separator, domain = email.partition("@")
+        valid_email = bool(separator and local and domain and "." in domain and not any(ch.isspace() for ch in email))
+        if len(email) > 254 or not valid_email:
+            _record_auth_failure(email)
             flash("Geçerli bir e-posta adresi girin.", "error")
             return render_template("auth.html", mode="register")
-        if len(password) < 10:
-            flash("Şifre en az 10 karakter olmalı.", "error")
+        if len(password) < 10 or len(password) > 1024:
+            _record_auth_failure(email)
+            flash("Şifre 10 ile 1024 karakter arasında olmalı.", "error")
             return render_template("auth.html", mode="register")
         with _db() as conn:
             existing = _execute(conn, "SELECT id FROM users WHERE email=?", (email,)).fetchone()
             if existing:
+                _record_auth_failure(email)
                 flash("Bu e-posta zaten kayıtlı.", "error")
                 return render_template("auth.html", mode="register")
             cur = _execute(conn, 
@@ -165,7 +197,8 @@ def login():
             return render_template("auth.html", mode="login"), 429
         with _db() as conn:
             user = _execute(conn, "SELECT id,email,password_hash FROM users WHERE email=?", (email,)).fetchone()
-        if not user or not check_password_hash(user["password_hash"], password):
+        password_valid = bool(user and len(password) <= 1024 and check_password_hash(user["password_hash"], password))
+        if not password_valid:
             _record_auth_failure(email)
             flash("E-posta veya şifre hatalı.", "error")
             return render_template("auth.html", mode="login")
@@ -173,9 +206,7 @@ def login():
         session.clear()
         session["user_id"] = user["id"]
         session["user_email"] = user["email"]
-        target = request.args.get("next", "")
-        if not target.startswith("/") or target.startswith("//"):
-            target = url_for("index")
+        target = _safe_next_target(request.args.get("next", ""))
         return redirect(target)
     return render_template("auth.html", mode="login")
 
