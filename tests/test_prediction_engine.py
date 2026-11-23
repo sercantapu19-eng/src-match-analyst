@@ -38,6 +38,23 @@ class PredictionEngineTests(unittest.TestCase):
         self.assertIn("Başakşehir Futbol Kulübü 6 maç", data["notes"])
         self.assertIn("Çorum Belediyespor 6 maç", data["notes"])
 
+    def test_expanded_istanbul_and_corum_name_variants_match_same_club(self):
+        from prediction_engine import _normalize_team
+        variants = {
+            "basaksehir": [
+                "Başakşehir", "İstanbul Başakşehir FK",
+                "İstanbul Başakşehir Futbol Kulübü", "Başakşehir Futbol Kulübü"
+            ],
+            "corum": [
+                "Çorum", "Çorum FK", "Arca Çorum FK",
+                "Çorum Belediyespor", "Arca Çorum Futbol Kulübü"
+            ],
+        }
+        for canonical, names in variants.items():
+            for name in names:
+                with self.subTest(name=name):
+                    self.assertEqual(_normalize_team(name), canonical)
+
     def test_prediction_uses_finished_history_for_both_teams(self):
         history = []
         for i in range(4):
