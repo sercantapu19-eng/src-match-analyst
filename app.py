@@ -45,7 +45,7 @@ def generate_prediction(c, mid):
  history=c.execute("SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff").fetchall()
  data,message=predict(dict(m),[dict(x) for x in history])
  if not data:
-  c.execute("UPDATE matches SET prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?",(message,mid))
+  c.execute("UPDATE matches SET prediction_message=?,prediction_confidence='{}',market_probabilities='{}',analysis_notes='' WHERE id=?",(message,mid))
   return
  for key,value in data["predictions"].items():
   c.execute("UPDATE matches SET "+key+"=? WHERE id=?",(value,mid))
@@ -279,6 +279,10 @@ def unsave(mid):
 def detail(mid):
  with db() as c:
   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
+  # Lazily rebuild probabilities for fixtures imported before the detailed-market field existed.
+  if m["status"] == "scheduled" and not json.loads(m["market_probabilities"] or "{}"):
+   generate_prediction(c, mid)
+   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
   rs=c.execute("SELECT * FROM results WHERE match_id=? ORDER BY id",(mid,)).fetchall()
   confidence=json.loads(m["prediction_confidence"] or "{}")
   market_probabilities=json.loads(m["market_probabilities"] or "{}")
