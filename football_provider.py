@@ -346,7 +346,8 @@ class FootballProvider:
             else:
                 raw_status = str(self.pick(item, "status_text", "state", default=status_obj)).lower()
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
-            if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT"):
+            elapsed_value = self.elapsed_minute(item)
+            if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT") or elapsed_value is not None:
                 state = "live"
             elif raw_status.strip() in ("ft", "aet", "pen", "finished", "ended") or any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT", "AET", "PEN", "FINISHED", "ENDED", "FULL_TIME", "FULLTIME"):
                 state = "finished"
@@ -373,7 +374,7 @@ class FootballProvider:
                 "kickoff": self.local_kickoff(kickoff), "status": state,
                 "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),
-                "elapsed_minute": self.elapsed_minute(item),
+                "elapsed_minute": elapsed_value,
                 "ht_home": score_int(ht_home), "ht_away": score_int(ht_away)
             })
         return output
