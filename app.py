@@ -397,7 +397,7 @@ def history_sync_step():
   if phase=="history":
    cursor=date.fromisoformat(day)
    end=date.fromisoformat(job["end_date"])
-   while cursor<=end and len(history_days)<3:
+   while cursor<=end and len(history_days)<4:
     history_days.append(cursor.isoformat())
     cursor+=timedelta(days=1)
   team_names=json.loads(job["team_names"] or "[]") if phase=="team_history" else []
@@ -409,10 +409,10 @@ def history_sync_step():
  fetch_error=None
  if phase=="history":
   try:
-   # Fetch up to three adjacent days concurrently. This cuts the number of
+   # Fetch up to four adjacent days concurrently. This cuts the number of
    # browser round-trips while keeping provider load modest and bounded.
    history_fixtures={}
-   with ThreadPoolExecutor(max_workers=3) as pool:
+   with ThreadPoolExecutor(max_workers=4) as pool:
     futures={pool.submit(FootballProvider(os.environ.get("SPORTSCORE_API_KEY")).fixtures, target_day, status="finished"):target_day for target_day in history_days}
     for future in as_completed(futures):
      target_day=futures[future]
