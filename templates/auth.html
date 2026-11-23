@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block content %}
+<section class="panel auth-panel">
+<h1>{{ "Hesap oluştur" if mode == "register" else "Giriş yap" }}</h1>
+<p>{{ "Kaydettiğin maçlar hesabına özel tutulur." if mode == "register" else "Kaydettiğin maçlara erişmek için giriş yap." }}</p>
+<form method="post" class="auth-form">
+<label>E-posta<input type="email" name="email" autocomplete="email" required maxlength="254"></label>
+<label>Şifre<input type="password" name="password" autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}" required minlength="{{ 10 if mode == 'register' else 1 }}"></label>
+<button class="button" type="submit">{{ "Hesap oluştur" if mode == "register" else "Giriş yap" }}</button>
+</form>
+<p>{% if mode == "register" %}Zaten hesabın var mı? <a href="{{ url_for('auth.login') }}">Giriş yap</a>{% else %}Hesabın yok mu? <a href="{{ url_for('auth.register') }}">Hesap oluştur</a>{% endif %}</p>
+{% if mode == "register" %}<small>Şifre en az 10 karakter olmalıdır. E-posta adresin hesap girişin için kullanılır.</small>{% endif %}
+</section>{% endblock %}
