@@ -171,6 +171,80 @@ def sync_fixtures():
   flash(f"Beklenmeyen senkronizasyon hatası: {e}", "error")
  return redirect(url_for("index",date=day))
 
+@app.post("/sync/history/start")
+def start_history_sync():
+ today=date.today()
+ start=today-timedelta(days=180)
+ end=today-timedelta(days=1)
+ now=datetime.utcnow().isoformat()
+ with db() as c:
+  active=c.execute("SELECT * FROM sync_jobs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
+  if active:
+   return jsonify(history_job_payload(active))
+  cur=c.execute("""INSERT INTO sync_jobs(phase,status,start_date,end_date,current_date,total_days,created_at,updated_at)
+   VALUES('history','running',?,?,?,?,?,?)""",(start.isoformat(),end.isoformat(),start.isoformat(),(end-start).days+1,now,now))
+  job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(cur.lastrowid,)).fetchone()
+ return jsonify(history_job_payload(job))
+
+@app.get("/sync/history/status")
+def history_sync_status():
+ job_id=request.args.get("job_id",type=int)
+ with db() as c:
+  job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone() if job_id else c.execute("SELECT * FROM sync_jobs ORDER BY id DESC LIMIT 1").fetchone()
+ if not job:return jsonify({"status":"idle","percent":0})
+ return jsonify(history_job_payload(job))
+
+@app.post("/sync/history/step")
+def history_sync_step():
+ payload=request.get_json(silent=True) or {}
+ job_id=payload.get("job_id")
+ with db() as c:
+  job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone()
+  if not job:return jsonify({"status":"error","last_error":"Senkronizasyon işi bulunamadı."}),404
+  if job["status"]!="running":return jsonify(history_job_payload(job))
+  phase=job["phase"]
+  if phase=="history":
+   day=job["current_date"]
+   try:
+    provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
+    fixtures=provider.fixtures(day,status="finished")
+    store_fixtures(c,fixtures)
+    next_day=(date.fromisoformat(day)+timedelta(days=1)).isoformat()
+    processed=job["processed_days"]+1
+    if next_day>job["end_date"]:
+     pred_total=c.execute("SELECT COUNT(*) FROM matches WHERE status='scheduled' AND kickoff>=?",(datetime.utcnow().isoformat(),)).fetchone()[0]
+     next_phase="predictions"
+     final_status="completed" if pred_total==0 else "running"
+    else:
+     pred_total=job["predictions_total"]; next_phase="history"; final_status="running"
+    c.execute("""UPDATE sync_jobs SET phase=?,status=?,current_date=?,processed_days=?,fixtures_count=fixtures_count+?,
+      predictions_total=?,attempts=0,last_error='',updated_at=? WHERE id=?""",
+      (next_phase,final_status,next_day,processed,len(fixtures),pred_total,datetime.utcnow().isoformat(),job_id))
+    if final_status=="completed":
+     c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
+      ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"]+len(fixtures),"success","180 günlük geçmiş maç verisi tamamlandı"))
+   except ProviderError as exc:
+    attempts=job["attempts"]+1
+    state="error" if attempts>=3 else "running"
+    c.execute("UPDATE sync_jobs SET attempts=?,last_error=?,status=?,updated_at=? WHERE id=?",
+     (attempts,str(exc),state,datetime.utcnow().isoformat(),job_id))
+  elif phase=="predictions":
+   history=[dict(x) for x in c.execute("""SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away
+    FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff""").fetchall()]
+   batch=c.execute("""SELECT * FROM matches WHERE status='scheduled' AND kickoff>=?
+    ORDER BY kickoff,id LIMIT 8 OFFSET ?""",(datetime.utcnow().isoformat(),job["predictions_processed"])).fetchall()
+   for target in batch:rebuild_one_prediction(c,target,history)
+   processed=job["predictions_processed"]+len(batch)
+   done=processed>=job["predictions_total"] or not batch
+   c.execute("UPDATE sync_jobs SET predictions_processed=?,status=?,updated_at=? WHERE id=?",
+    (processed,"completed" if done else "running",datetime.utcnow().isoformat(),job_id))
+   if done:
+    c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
+     ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"],"success",
+      f"Geçmiş veri tamamlandı; {job['fixtures_count']} maç tarandı, {processed} yaklaşan maç yeniden tahmin edildi."))
+  job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone()
+ return jsonify(history_job_payload(job))
+
 @app.route("/match/new",methods=["GET","POST"])
 def new_match():
  if request.method=="POST":
