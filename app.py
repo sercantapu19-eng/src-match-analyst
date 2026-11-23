@@ -1,6 +1,6 @@
 import os, sqlite3, json, time
 from datetime import datetime, date, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict
 
@@ -27,6 +27,7 @@ def init_db():
   c.execute("""CREATE TABLE IF NOT EXISTS saved_matches(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL UNIQUE,saved_at TEXT NOT NULL,FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
   c.execute("""CREATE TABLE IF NOT EXISTS results(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL,market TEXT NOT NULL,prediction TEXT NOT NULL,actual TEXT DEFAULT '',outcome TEXT DEFAULT 'pending',FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,UNIQUE(match_id,market))""")
   c.execute("""CREATE TABLE IF NOT EXISTS sync_log(id INTEGER PRIMARY KEY AUTOINCREMENT,provider TEXT,day TEXT,ran_at TEXT,fixtures_count INTEGER DEFAULT 0,status TEXT,message TEXT)""")
+  c.execute("""CREATE TABLE IF NOT EXISTS sync_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT,phase TEXT NOT NULL,status TEXT NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,current_date TEXT NOT NULL,total_days INTEGER NOT NULL,processed_days INTEGER DEFAULT 0,fixtures_count INTEGER DEFAULT 0,predictions_total INTEGER DEFAULT 0,predictions_processed INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,last_error TEXT DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)""")
 
 def sync_prediction_rows(c,mid):
  m=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
@@ -52,6 +53,50 @@ def generate_prediction(c, mid):
 
 def provider_ready():
  return True  # SportScore supports public access; API key is optional
+
+def store_fixtures(c, fixtures):
+ for f in fixtures:
+  if f["status"] == "finished" and (f["home_goals"] is None or f["away_goals"] is None):
+   continue
+  c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
+    home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
+    home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
+    status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
+    ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,elapsed_minute=excluded.elapsed_minute""",
+    (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
+     "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
+
+def rebuild_one_prediction(c, target, history):
+ try:
+  data,message=predict(dict(target),history)
+  if not data:
+   c.execute("""UPDATE matches SET match_result='',htft='',over25='',btts='',first_half_btts='',second_half_btts='',
+    prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?""",(message,target["id"]))
+   c.execute("DELETE FROM results WHERE match_id=? AND outcome='pending'",(target["id"],))
+   return
+  c.execute("""UPDATE matches SET match_result='',htft='',over25='',btts='',first_half_btts='',second_half_btts='',
+    prediction_message='',prediction_confidence=?,analysis_notes=? WHERE id=?""",
+    (json.dumps(data["confidence"],ensure_ascii=False),data["notes"],target["id"]))
+  c.execute("DELETE FROM results WHERE match_id=? AND outcome='pending'",(target["id"],))
+  for key,value in data["predictions"].items():
+   if key not in dict(MARKETS): continue
+   c.execute("UPDATE matches SET "+key+"=? WHERE id=?",(value,target["id"]))
+   c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction,actual='',outcome='pending'",
+    (target["id"],dict(MARKETS)[key],value))
+ except Exception as exc:
+  c.execute("UPDATE matches SET prediction_message=? WHERE id=?",(f"Tahmin üretilemedi: {exc}",target["id"]))
+
+def history_job_payload(job):
+ total=max(1,job["total_days"]+job["predictions_total"])
+ done=job["processed_days"]+job["predictions_processed"]
+ percent=100 if job["status"]=="completed" else min(99,round(done*100/total))
+ return {"job_id":job["id"],"status":job["status"],"phase":job["phase"],
+  "processed_days":job["processed_days"],"total_days":job["total_days"],
+  "predictions_processed":job["predictions_processed"],"predictions_total":job["predictions_total"],
+  "fixtures_count":job["fixtures_count"],"percent":percent,"last_error":job["last_error"]}
+
 
 init_db()
 
