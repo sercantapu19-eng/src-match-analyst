@@ -38,10 +38,11 @@ class FootballProvider:
         text = str(value).strip()
         try:
             parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-            # Only convert timestamps that explicitly carry a timezone. Do not guess
-            # the timezone of provider values that are already naive/local.
-            if parsed.tzinfo is not None:
-                return parsed.astimezone(ZoneInfo("Europe/Istanbul")).isoformat()
+            # SportScore fixture timestamps are UTC. Some serialized values omit
+            # the trailing Z, so interpret naive ISO timestamps as UTC as well.
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(ZoneInfo("Europe/Istanbul")).isoformat()
         except (ValueError, TypeError):
             pass
         return text
