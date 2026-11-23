@@ -155,6 +155,22 @@ def predict(match, history):
     matrix = _matrix(home_xg, away_xg)
     result_probs, over_prob, btts_prob = _outcome(matrix)
 
+    # Expose every supported selection, not just the single most likely pick.
+    total_over_under = {}
+    for line in (0.5, 1.5, 2.5, 3.5, 4.5):
+        over = sum(matrix[h][a] for h in range(MAX_GOALS + 1) for a in range(MAX_GOALS + 1) if h + a > line)
+        total_over_under[str(line)] = {"over": over, "under": 1.0 - over}
+    market_probabilities = {
+        "match_result": {"1": result_probs["1"], "X": result_probs["X"], "2": result_probs["2"]},
+        "goals": total_over_under,
+        "btts": {"Var": btts_prob, "Yok": 1.0 - btts_prob},
+        "first_half_result": None,
+        "htft": None,
+        "first_half_btts": None,
+        "second_half_btts": None,
+        "corners": {"available": False, "message": "Doğrulanmış maç bazlı korner geçmişi veri kaynağında bulunmadığı için hesaplanamıyor."},
+    }
+
     best_result = max(result_probs, key=result_probs.get)
     predictions = {
         "match_result": {"1": "MS 1", "X": "MS X", "2": "MS 2"}[best_result],
@@ -186,6 +202,13 @@ def predict(match, history):
         # Approximate HT/FT by independent first- and second-half score distributions.
         first = _matrix(h1, a1)
         second = _matrix(h2, a2)
+        half_result = {"1": 0.0, "X": 0.0, "2": 0.0}
+        for h in range(MAX_GOALS + 1):
+            for a in range(MAX_GOALS + 1):
+                half_result["1" if h > a else "X" if h == a else "2"] += first[h][a]
+        market_probabilities["first_half_result"] = half_result
+        market_probabilities["first_half_btts"] = {"Var": p1, "Yok": 1.0-p1}
+        market_probabilities["second_half_btts"] = {"Var": p2, "Yok": 1.0-p2}
         combos = defaultdict(float)
         for h in range(MAX_GOALS + 1):
             for a in range(MAX_GOALS + 1):
@@ -197,6 +220,7 @@ def predict(match, history):
         best_htft = max(combos, key=combos.get)
         predictions["htft"] = best_htft
         confidence["htft"] = round(combos[best_htft] * 100)
+        market_probabilities["htft"] = {key: value for key, value in combos.items()}
 
     notes = (
         f"İstatistik modeli · Son {RECENT_LIMIT} maçlık form (mevcut veri kadar). "
@@ -207,4 +231,4 @@ def predict(match, history):
         "Sakatlık, ilk 11, motivasyon ve bahis oranları henüz modele dahil değildir. "
         "Korner verisi doğrulanmadığı için korner tahmini üretilmez."
     )
-    return {"predictions": predictions, "confidence": confidence, "notes": notes}, None
+    return {"predictions": predictions, "confidence": confidence, "market_probabilities": market_probabilities, "notes": notes}, None

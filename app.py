@@ -19,9 +19,9 @@ def init_db():
    odds_away TEXT DEFAULT '',htft TEXT DEFAULT '',over25 TEXT DEFAULT '',btts TEXT DEFAULT '',
    first_half_btts TEXT DEFAULT '',second_half_btts TEXT DEFAULT '',corners TEXT DEFAULT '',
    notes TEXT DEFAULT '',created_at TEXT NOT NULL,provider TEXT DEFAULT '',external_id TEXT DEFAULT '',
-   home_goals INTEGER,away_goals INTEGER,ht_home INTEGER,ht_away INTEGER,status_short TEXT DEFAULT '',elapsed_minute INTEGER,match_result TEXT DEFAULT '',prediction_confidence TEXT DEFAULT '{}',prediction_message TEXT DEFAULT '',analysis_notes TEXT DEFAULT '')""")
+   home_goals INTEGER,away_goals INTEGER,ht_home INTEGER,ht_away INTEGER,status_short TEXT DEFAULT '',elapsed_minute INTEGER,match_result TEXT DEFAULT '',prediction_confidence TEXT DEFAULT '{}',market_probabilities TEXT DEFAULT '{}',prediction_message TEXT DEFAULT '',analysis_notes TEXT DEFAULT '')""")
   cols={r[1] for r in c.execute("PRAGMA table_info(matches)").fetchall()}
-  for name,typ in [("provider","TEXT DEFAULT ''"),("external_id","TEXT DEFAULT ''"),("home_goals","INTEGER"),("away_goals","INTEGER"),("ht_home","INTEGER"),("ht_away","INTEGER"),("status_short","TEXT DEFAULT ''"),("elapsed_minute","INTEGER"),("match_result","TEXT DEFAULT ''"),("prediction_confidence","TEXT DEFAULT '{}'"),("prediction_message","TEXT DEFAULT ''"),("analysis_notes","TEXT DEFAULT ''")]:
+  for name,typ in [("provider","TEXT DEFAULT ''"),("external_id","TEXT DEFAULT ''"),("home_goals","INTEGER"),("away_goals","INTEGER"),("ht_home","INTEGER"),("ht_away","INTEGER"),("status_short","TEXT DEFAULT ''"),("elapsed_minute","INTEGER"),("match_result","TEXT DEFAULT ''"),("prediction_confidence","TEXT DEFAULT '{}'"),("market_probabilities","TEXT DEFAULT '{}'"),("prediction_message","TEXT DEFAULT ''"),("analysis_notes","TEXT DEFAULT ''")]:
    if name not in cols: c.execute(f"ALTER TABLE matches ADD COLUMN {name} {typ}")
   c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_fixture ON matches(provider,external_id) WHERE external_id <> ''")
   c.execute("""CREATE TABLE IF NOT EXISTS saved_matches(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL UNIQUE,saved_at TEXT NOT NULL,FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
@@ -45,14 +45,14 @@ def generate_prediction(c, mid):
  history=c.execute("SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff").fetchall()
  data,message=predict(dict(m),[dict(x) for x in history])
  if not data:
-  c.execute("UPDATE matches SET prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?",(message,mid))
+  c.execute("UPDATE matches SET prediction_message=?,prediction_confidence='{}',market_probabilities='{}',analysis_notes='' WHERE id=?",(message,mid))
   return
  for key,value in data["predictions"].items():
   c.execute("UPDATE matches SET "+key+"=? WHERE id=?",(value,mid))
   label=dict(MARKETS).get(key)
   if label:
    c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction",(mid,label,value))
- c.execute("UPDATE matches SET prediction_confidence=?,prediction_message='',analysis_notes=? WHERE id=?",(json.dumps(data["confidence"],ensure_ascii=False),data["notes"],mid))
+ c.execute("UPDATE matches SET prediction_confidence=?,market_probabilities=?,prediction_message='',analysis_notes=? WHERE id=?",(json.dumps(data["confidence"],ensure_ascii=False),json.dumps(data.get("market_probabilities",{}),ensure_ascii=False),data["notes"],mid))
 
 def provider_ready():
  return True  # SportScore supports public access; API key is optional
@@ -80,12 +80,12 @@ def rebuild_one_prediction(c, target, history):
   data,message=predict(dict(target),history)
   if not data:
    c.execute("""UPDATE matches SET match_result='',htft='',over25='',btts='',first_half_btts='',second_half_btts='',
-    prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?""",(message,target["id"]))
+    prediction_message=?,prediction_confidence='{}',market_probabilities='{}',analysis_notes='' WHERE id=?""",(message,target["id"]))
    c.execute("DELETE FROM results WHERE match_id=? AND outcome='pending'",(target["id"],))
    return
   c.execute("""UPDATE matches SET match_result='',htft='',over25='',btts='',first_half_btts='',second_half_btts='',
-    prediction_message='',prediction_confidence=?,analysis_notes=? WHERE id=?""",
-    (json.dumps(data["confidence"],ensure_ascii=False),data["notes"],target["id"]))
+    prediction_message='',prediction_confidence=?,market_probabilities=?,analysis_notes=? WHERE id=?""",
+    (json.dumps(data["confidence"],ensure_ascii=False),json.dumps(data.get("market_probabilities",{}),ensure_ascii=False),data["notes"],target["id"]))
   c.execute("DELETE FROM results WHERE match_id=? AND outcome='pending'",(target["id"],))
   for key,value in data["predictions"].items():
    if key not in dict(MARKETS): continue
@@ -160,7 +160,7 @@ def sync_fixtures():
       c.execute("UPDATE matches SET "+key+"=? WHERE id=?",(value,target["id"]))
       label=dict(MARKETS)[key]
       c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction",(target["id"],label,value))
-     c.execute("UPDATE matches SET prediction_confidence=?,prediction_message='',analysis_notes=? WHERE id=?",(json.dumps(data["confidence"],ensure_ascii=False),data["notes"],target["id"]))
+     c.execute("UPDATE matches SET prediction_confidence=?,market_probabilities=?,prediction_message='',analysis_notes=? WHERE id=?",(json.dumps(data["confidence"],ensure_ascii=False),json.dumps(data.get("market_probabilities",{}),ensure_ascii=False),data["notes"],target["id"]))
     except Exception as prediction_error:
      # A single bad fixture must not abort the whole daily import.
      c.execute("UPDATE matches SET prediction_message=? WHERE id=?",(f"Tahmin üretilemedi: {prediction_error}",target["id"]))
@@ -279,10 +279,15 @@ def unsave(mid):
 def detail(mid):
  with db() as c:
   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
+  # Lazily rebuild probabilities for fixtures imported before the detailed-market field existed.
+  if m and m["status"] == "scheduled" and not json.loads(m["market_probabilities"] or "{}"):
+   generate_prediction(c, mid)
+   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
   rs=c.execute("SELECT * FROM results WHERE match_id=? ORDER BY id",(mid,)).fetchall()
   confidence=json.loads(m["prediction_confidence"] or "{}")
+  market_probabilities=json.loads(m["market_probabilities"] or "{}")
  if not m:return "Maç bulunamadı",404
- return render_template("detail.html",m=m,results=rs,markets=MARKETS,confidence=confidence)
+ return render_template("detail.html",m=m,results=rs,markets=MARKETS,confidence=confidence,market_probabilities=market_probabilities)
 @app.post("/match/<int:mid>/status")
 def status(mid):
  st=request.form.get("status","scheduled")
