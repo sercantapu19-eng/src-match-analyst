@@ -626,6 +626,40 @@ def history_sync_step():
  return jsonify(history_job_payload(job))
 
 
+@app.post("/coupon/save")
+@login_required
+def save_coupon_matches():
+    raw_ids=request.form.getlist("match_ids")
+    ids=[]
+    for value in raw_ids:
+        try:
+            mid=int(value)
+            if mid>0 and mid not in ids: ids.append(mid)
+        except (TypeError,ValueError):
+            continue
+    if not ids:
+        flash("Kaydetmek için en az bir maç seçmelisin.","error")
+        return redirect(request.referrer or url_for("coupon_center"))
+    uid=current_user_id()
+    saved_count=0
+    with db() as c:
+        for mid in ids:
+            match=c.execute("""SELECT id FROM matches
+                WHERE id=? AND status='scheduled'
+                AND datetime(kickoff)>=datetime('now')
+                AND COALESCE(market_probabilities,'{}') NOT IN ('','{}')""",(mid,)).fetchone()
+            if not match:
+                continue
+            cur=c.execute("""INSERT INTO user_saved_matches(user_id,match_id,saved_at)
+                VALUES(?,?,?) ON CONFLICT(user_id,match_id) DO NOTHING""",
+                (uid,mid,datetime.utcnow().isoformat()))
+            saved_count += max(0,cur.rowcount or 0)
+    if saved_count:
+        flash(f"{saved_count} maç kaydedildi. Kaydedilen maçlar bölümünden ulaşabilirsin.","success")
+    else:
+        flash("Seçilen maçlar zaten kayıtlı veya artık uygun değil.","info")
+    return redirect(url_for("saved"))
+
 @app.route("/coupon")
 def coupon_center():
     """Filter real, stored pre-match probabilities; never fabricate bookmaker prices."""
