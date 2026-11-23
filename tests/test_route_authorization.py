@@ -43,12 +43,13 @@ class RouteAuthorizationTests(unittest.TestCase):
         response = self.client.post("/sync/live/refresh", json={"date": "2026-11-23"})
         self.assertEqual(response.status_code, 400)
 
-    def test_login_required_routes_redirect_anonymous_requests(self):
-        for path in ("/saved", "/sync/history/status"):
-            with self.subTest(path=path):
-                response = self.client.get(path)
-                self.assertEqual(response.status_code, 302)
-                self.assertIn("/login", response.headers["Location"])
+    def test_saved_page_redirects_anonymous_users_to_login(self):
+        response = self.client.get("/saved")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
+
+    def test_history_sync_status_is_admin_only(self):
+        self.assertEqual(self.client.get("/sync/history/status").status_code, 403)
 
 
 if __name__ == "__main__":
