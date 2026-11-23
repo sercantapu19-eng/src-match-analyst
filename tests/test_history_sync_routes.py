@@ -12,7 +12,8 @@ class HistorySyncRouteTests(unittest.TestCase):
         application.init_db()
         self.client = application.app.test_client()
         self.old_admin_ids = os.environ.get("ADMIN_USER_IDS")
-        os.environ["ADMIN_EMAILS"] = "admin@example.com"
+        os.environ.pop("ADMIN_EMAILS", None)
+        os.environ["ADMIN_USER_IDS"] = "1"
         with self.client.session_transaction() as session:
             session["user_id"] = 1
             session["user_email"] = "admin@example.com"
@@ -20,10 +21,10 @@ class HistorySyncRouteTests(unittest.TestCase):
 
     def tearDown(self):
         application.DB_PATH = self.old_db_path
-        if self.old_admin_emails is None:
-            os.environ.pop("ADMIN_EMAILS", None)
+        if self.old_admin_ids is None:
+            os.environ.pop("ADMIN_USER_IDS", None)
         else:
-            os.environ["ADMIN_EMAILS"] = self.old_admin_emails
+            os.environ["ADMIN_USER_IDS"] = self.old_admin_ids
         self.tempdir.cleanup()
 
     def test_start_creates_resumable_history_job(self):
