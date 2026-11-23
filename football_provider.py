@@ -170,7 +170,7 @@ class FootballProvider:
         raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
         words = re.findall(r"[a-z0-9]+", raw)
         removable = {"fc", "afc", "cf", "sc", "fk", "sk", "club", "football",
-                     "futbol", "kulubu", "belediye", "belediyespor", "spor", "istanbul"}
+                     "futbol", "kulubu", "belediye", "belediyespor", "spor", "istanbul", "arca"}
         return " ".join(word for word in words if word not in removable)
 
     def search_team_slug(self, team_name):
