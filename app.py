@@ -420,31 +420,38 @@ def sync_fixtures():
 @app.post("/sync/live/refresh")
 def refresh_live_fixtures():
  payload=request.get_json(silent=True) or {}
- day=(request.form.get("date") or payload.get("date") or date.today().isoformat())
+ day=(request.form.get("date") or payload.get("date") or datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat())
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-  # The fixtures endpoint supplies scores/status but often omits the running
-  # clock. SportScore's dedicated widget feed includes status_text such as 67'.
+  # Dedicated SportScore widget feed contains the live clock (e.g. 67' / 45+2).
   live_fixtures=provider.live_matches(limit=50)
   def team_key(value):
    normalized=provider._normalize_search_name(value)
    return " ".join(sorted(normalized.split()))
   with db() as c:
+   # Include scheduled rows too: a match must be promoted to live when the
+   # provider confirms kickoff, not left in "time passed / verify" forever.
    rows=c.execute("""SELECT id,home,away,status_short,elapsed_minute,home_goals,away_goals
-    FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY kickoff""",(day,)).fetchall()
+    FROM matches WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live')
+    ORDER BY kickoff""",(day,)).fetchall()
    by_pair={(team_key(row["home"]),team_key(row["away"])):row for row in rows}
+   updated_ids=set()
    for fixture in live_fixtures:
+    if fixture.get("kickoff") and str(fixture["kickoff"])[:10] != day:
+     continue
     pair=(team_key(fixture["home"]),team_key(fixture["away"]))
     row=by_pair.get(pair)
     if not row:
      continue
     c.execute("""UPDATE matches SET status='live',status_short=?,
-      elapsed_minute=?,home_goals=COALESCE(?,home_goals),
-      away_goals=COALESCE(?,away_goals) WHERE id=?""",
-      (fixture.get("status_short") or "",fixture.get("elapsed_minute"),
+      elapsed_minute=COALESCE(?,elapsed_minute),
+      home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals)
+      WHERE id=?""",
+      (fixture.get("status_short") or "LIVE",fixture.get("elapsed_minute"),
        fixture.get("home_goals"),fixture.get("away_goals"),row["id"]))
+    updated_ids.add(row["id"])
    rows=c.execute("""SELECT id,status_short,elapsed_minute,home_goals,away_goals
-    FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY id""",(day,)).fetchall()
+    FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY kickoff""",(day,)).fetchall()
   result=[]
   for row in rows:
    code=str(row["status_short"] or "").upper()
@@ -458,10 +465,12 @@ def refresh_live_fixtures():
    elif code in ("2H","2ND_HALF"):
     label="Canlı · 2. Yarı"
    else:
-    label="Canlı"
+    label="Canlı · Dakika bilgisi bekleniyor"
    result.append({"id":row["id"],"minute_label":label,
+    "minute":minute,
     "score":f"{row['home_goals']} – {row['away_goals']}" if row["home_goals"] is not None and row["away_goals"] is not None else "—"})
-  return jsonify({"matches":result,"updated_at":datetime.utcnow().isoformat()})
+  return jsonify({"matches":result,"updated_at":datetime.now(ZoneInfo("Europe/Istanbul")).isoformat(),
+   "provider_confirmed_live":len(updated_ids)})
  except ProviderError as exc:
   return jsonify({"error":str(exc)}),502
  except Exception as exc:
@@ -615,6 +624,71 @@ def history_sync_step():
       f"Geçmiş veri tamamlandı; {job['fetched_count']} kayıt alındı, {job['fixtures_count']} tamamlanmış maç kaydedildi, {job['skipped_count']} kayıt atlandı; {processed} yaklaşan maç yeniden tahmin edildi."))
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone()
  return jsonify(history_job_payload(job))
+
+
+@app.route("/coupon")
+def coupon_center():
+    """Filter real, stored pre-match probabilities; never fabricate bookmaker prices."""
+    market = request.args.get("market", "all")
+    try:
+        min_probability = max(0.0, min(100.0, float(request.args.get("min_probability", "70"))))
+        min_odds = max(1.01, float(request.args.get("min_odds", "1.40")))
+        max_odds = max(min_odds, min(1000.0, float(request.args.get("max_odds", "30"))))
+    except (TypeError, ValueError):
+        min_probability, min_odds, max_odds = 70.0, 1.40, 30.0
+    league_filter = request.args.get("league", "all")
+    risk = request.args.get("risk", "balanced")
+    if risk not in ("conservative", "balanced", "aggressive"):
+        risk = "balanced"
+    risk_floor = {"conservative": 80.0, "balanced": 70.0, "aggressive": 60.0}[risk]
+    effective_floor = max(min_probability, risk_floor)
+    market_labels = {"match_result":"Maç Sonucu","goals":"2,5 Gol","btts":"KG Var/Yok",
+        "htft":"İY/MS","first_half_btts":"1. Yarı KG","second_half_btts":"2. Yarı KG","corners":"Korner"}
+    with db() as c:
+        fixtures = c.execute("""SELECT * FROM matches
+            WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')
+            ORDER BY kickoff,id""").fetchall()
+        leagues = sorted({str(row["league"] or "").strip() for row in fixtures if str(row["league"] or "").strip()}, key=str.casefold)
+    ready, waiting, seen = [], [], set()
+    for match in fixtures:
+        identity=(str(match["home"]).strip().casefold(),str(match["away"]).strip().casefold(),
+            str(match["league"] or "").strip().casefold(),str(match["kickoff"] or ""))
+        if identity in seen: continue
+        seen.add(identity)
+        if league_filter != "all" and (match["league"] or "") != league_filter: continue
+        try: probabilities=json.loads(match["market_probabilities"] or "{}")
+        except (TypeError,ValueError): probabilities={}
+        selections=[]
+        for option,label,odd_key in (("1","MS 1","odds_home"),("X","MS X","odds_draw"),("2","MS 2","odds_away")):
+            value=(probabilities.get("match_result") or {}).get(option)
+            if value is not None: selections.append(("match_result",label,value,match[odd_key]))
+        goals=(probabilities.get("goals") or {}).get("2.5") or {}
+        for option,label in (("over","Üst 2,5"),("under","Alt 2,5")):
+            if goals.get(option) is not None: selections.append(("goals",label,goals[option],None))
+        for option,label in (("Var","KG Var"),("Yok","KG Yok")):
+            value=(probabilities.get("btts") or {}).get(option)
+            if value is not None: selections.append(("btts",label,value,None))
+        for key,label in (("htft","İY/MS"),("first_half_btts","1. Yarı KG"),("second_half_btts","2. Yarı KG")):
+            for option,value in (probabilities.get(key) or {}).items():
+                selections.append((key,option if key=="htft" else label+" "+option,value,None))
+        for key,label,probability,raw_odds in selections:
+            if market not in ("all",key): continue
+            try: probability=float(probability)
+            except (TypeError,ValueError): continue
+            if not 0 <= probability <= 1 or probability*100 < effective_floor: continue
+            try: odds=float(str(raw_odds).replace(",",".")) if raw_odds not in (None,"") else None
+            except (TypeError,ValueError): odds=None
+            row={"id":match["id"],"home":match["home"],"away":match["away"],
+                "league":match["league"] or "Lig belirtilmedi","kickoff":match["kickoff"],
+                "market":market_labels.get(key,key),"selection":label,
+                "probability":round(probability*100,1),"odds":odds}
+            if odds is None: waiting.append(row)
+            elif min_odds <= odds <= max_odds: ready.append(row)
+    ready.sort(key=lambda row:(-row["probability"],row["kickoff"]))
+    waiting.sort(key=lambda row:(-row["probability"],row["kickoff"]))
+    return render_template("coupon.html",ready=ready,waiting=waiting,leagues=leagues,
+        filters={"market":market,"min_probability":min_probability,"min_odds":min_odds,
+            "max_odds":max_odds,"league":league_filter,"risk":risk},effective_floor=effective_floor)
 
 @app.route("/match/new",methods=["GET","POST"])
 @admin_required
