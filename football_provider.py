@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 BASE_URL = "https://sportscore.com/api/v1/fixtures/"
 SEARCH_URL = "https://sportscore.com/api/v1/search/"
 TEAM_URL = "https://sportscore.com/api/widget/team/"
+LIVE_MATCHES_URL = "https://sportscore.com/api/widget/matches/"
 
 class ProviderError(Exception):
     pass
@@ -51,7 +52,7 @@ class FootballProvider:
             if not text:
                 return None
             match = re.fullmatch(
-                r"(\d{1,3})(?:\s*\+\s*(\d{1,2}))?\s*(?:['′’]|m|min|mins|minute|minutes)?",
+                r"(?:live|canli|minute|dakika)?\s*(\d{1,3})(?:\s*\+\s*(\d{1,2}))?\s*(?:['′’]|m|min|mins|minute|minutes)?",
                 text, flags=re.IGNORECASE
             )
             if match:
@@ -158,12 +159,12 @@ class FootballProvider:
 
             kickoff = self.pick(item, "kickoff", "date", "start_time", "time", "datetime", default="")
             if isinstance(kickoff, dict): kickoff = self.pick(kickoff, "utc", "datetime", "date", "timestamp", default="")
-            status_obj = self.pick(item, "status", "match_status", "state", default="upcoming")
+            status_obj = self.pick(item, "status", "match_status", "state", default=None)
             if isinstance(status_obj, dict):
                 raw_status = str(self.pick(status_obj, "long", "name", "label", "description", "status", "type", default="")).lower()
                 code = str(self.pick(status_obj, "short", "code", "status_code", default=self.pick(item, "status_short", "status_code", "period", default=""))).upper()
             else:
-                raw_status = str(self.pick(item, "status_text", "state", default=status_obj)).lower()
+                raw_status = str(status_obj if status_obj not in (None, "") else self.pick(item, "status_text", "state", default="upcoming")).lower()
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
             normalized_status = raw_status.strip().replace("-", "_").replace(" ", "_")
             live_codes = {"1H", "HT", "2H", "ET", "P", "LIVE", "INT", "INPLAY", "IN_PLAY",
@@ -339,12 +340,12 @@ class FootballProvider:
             kickoff = self.pick(item, "kickoff", "date", "start_time", "time", "datetime", default="")
             if isinstance(kickoff, dict):
                 kickoff = self.pick(kickoff, "utc", "datetime", "date", "timestamp", default="")
-            status_obj = self.pick(item, "status", "match_status", "state", default="upcoming")
+            status_obj = self.pick(item, "status", "match_status", "state", default=None)
             if isinstance(status_obj, dict):
                 raw_status = str(self.pick(status_obj, "long", "name", "label", "description", "status", "type", default="")).lower()
                 code = str(self.pick(status_obj, "short", "code", "status_code", default=self.pick(item, "status_short", "status_code", "period", default=""))).upper()
             else:
-                raw_status = str(self.pick(item, "status_text", "state", default=status_obj)).lower()
+                raw_status = str(status_obj if status_obj not in (None, "") else self.pick(item, "status_text", "state", default="upcoming")).lower()
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
             elapsed_value = self.elapsed_minute(item)
             if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT") or elapsed_value is not None:
@@ -378,6 +379,31 @@ class FootballProvider:
                 "ht_home": score_int(ht_home), "ht_away": score_int(ht_away)
             })
         return output
+
+    def live_matches(self, limit=50):
+        """Fetch the dedicated SportScore live/recent feed, which carries status_text clocks."""
+        try:
+            response = self.session.get(
+                LIVE_MATCHES_URL,
+                params={"sport": "football", "limit": min(50, max(1, int(limit)))},
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise ProviderError(f"SportScore canlı maç bağlantı hatası: {exc}") from exc
+        if response.status_code == 429:
+            raise ProviderError("SportScore canlı maç istek sınırı doldu.")
+        if response.status_code in (401, 403):
+            raise ProviderError("SportScore canlı maç erişimi reddedildi.")
+        if not response.ok:
+            raise ProviderError(f"SportScore canlı maç HTTP {response.status_code}.")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ProviderError("SportScore canlı maç yanıtı geçerli JSON değil.") from exc
+        return [
+            fixture for fixture in self.parse_fixtures_payload(payload)
+            if fixture.get("status") == "live"
+        ]
 
     def team_fixtures_for_team(self, team_name, limit=30):
         """Fetch up to 30 recent/upcoming fixtures for one named club."""

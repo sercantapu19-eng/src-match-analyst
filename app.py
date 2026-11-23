@@ -186,32 +186,36 @@ def refresh_live_fixtures():
  day=request.args.get("date") or date.today().isoformat()
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-  fixtures=provider.fixtures(day,status="live")
+  # The fixtures endpoint supplies scores/status but often omits the running
+  # clock. SportScore's dedicated widget feed includes status_text such as 67'.
+  live_fixtures=provider.live_matches(limit=50)
+  def team_key(value):
+   normalized=provider._normalize_search_name(value)
+   return " ".join(sorted(normalized.split()))
   with db() as c:
-   for f in fixtures:
-    if f.get("status")!="live" or not f.get("id"): continue
-    c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
-      home_goals,away_goals,status_short,elapsed_minute)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
-      home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
-      status='live',home_goals=COALESCE(excluded.home_goals,matches.home_goals),
-      away_goals=COALESCE(excluded.away_goals,matches.away_goals),
-      status_short=excluded.status_short,
-      elapsed_minute=COALESCE(excluded.elapsed_minute,matches.elapsed_minute)""",
-      (f["home"],f["away"],f["league"],f["kickoff"],"live",datetime.utcnow().isoformat(),
-       "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["status_short"],f.get("elapsed_minute")))
-   rows=c.execute("""SELECT id,status_short,elapsed_minute,home_goals,away_goals
+   rows=c.execute("""SELECT id,home,away,status_short,elapsed_minute,home_goals,away_goals
     FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY kickoff""",(day,)).fetchall()
+   by_pair={(team_key(row["home"]),team_key(row["away"])):row for row in rows}
+   for fixture in live_fixtures:
+    pair=(team_key(fixture["home"]),team_key(fixture["away"]))
+    row=by_pair.get(pair)
+    if not row:
+     continue
+    c.execute("""UPDATE matches SET status='live',status_short=?,
+      elapsed_minute=?,home_goals=COALESCE(?,home_goals),
+      away_goals=COALESCE(?,away_goals) WHERE id=?""",
+      (fixture.get("status_short") or "",fixture.get("elapsed_minute"),
+       fixture.get("home_goals"),fixture.get("away_goals"),row["id"]))
+   rows=c.execute("""SELECT id,status_short,elapsed_minute,home_goals,away_goals
+    FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY id""",(day,)).fetchall()
   result=[]
   for row in rows:
    code=str(row["status_short"] or "").upper()
-   minute=str(row["elapsed_minute"] or "").strip()
+   minute=row["elapsed_minute"]
    if code in ("HT","INT","BREAK","BT"):
     label="Devre Arası"
-   elif minute:
-    suffix="" if minute.endswith(("′", "'")) else "′"
-    label=f"Canlı {minute}{suffix}"
+   elif minute is not None and str(minute).strip():
+    label=f"Canlı {minute}′"
    elif code in ("1H","1ST_HALF"):
     label="Canlı · 1. Yarı"
    elif code in ("2H","2ND_HALF"):

@@ -124,6 +124,39 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(rows[0]["elapsed_minute"], 72)
         self.assertEqual(rows[0]["status"], "live")
 
+    def test_live_widget_feed_parses_minute_and_filters_non_live_matches(self):
+        provider = FootballProvider()
+        class LiveWidgetResponse:
+            status_code = 200
+            ok = True
+            text = ""
+            def json(self):
+                return {"matches": [
+                    {"slug": "team-a-vs-team-b", "home": "Team A", "away": "Team B",
+                     "status": "live", "status_text": "Live 67'", "home_score": 1, "away_score": 1},
+                    {"slug": "team-c-vs-team-d", "home": "Team C", "away": "Team D",
+                     "status": "finished", "status_text": "FT", "home_score": 2, "away_score": 0},
+                    {"slug": "team-e-vs-team-f", "home": "Team E", "away": "Team F",
+                     "status": "live", "status_text": "1st Half", "home_score": 0, "away_score": 0}
+                ]}
+        class LiveWidgetSession:
+            def get(self, url, params, timeout):
+                self.url = url
+                self.params = params
+                self.timeout = timeout
+                return LiveWidgetResponse()
+        fake = LiveWidgetSession()
+        provider.session = fake
+        rows = provider.live_matches()
+        self.assertEqual(fake.url, "https://sportscore.com/api/widget/matches/")
+        self.assertEqual(fake.params, {"sport": "football", "limit": 50})
+        self.assertEqual(fake.timeout, 10)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["elapsed_minute"], 67)
+        self.assertEqual(rows[0]["status"], "live")
+        self.assertIsNone(rows[1]["elapsed_minute"])
+        self.assertEqual(rows[1]["status"], "live")
+
     def test_compact_finished_status_codes_are_not_discarded(self):
         provider = FootballProvider()
         class CompactStatusResponse:
