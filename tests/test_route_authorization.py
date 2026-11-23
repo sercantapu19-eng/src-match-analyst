@@ -38,6 +38,11 @@ class RouteAuthorizationTests(unittest.TestCase):
         response = self.client.post("/auth/logout")
         self.assertEqual(response.status_code, 400)
 
+    def test_live_refresh_rejects_get_and_requires_csrf_for_post(self):
+        self.assertEqual(self.client.get("/sync/live/refresh").status_code, 405)
+        response = self.client.post("/sync/live/refresh", json={"date": "2026-11-23"})
+        self.assertEqual(response.status_code, 400)
+
     def test_login_required_routes_redirect_anonymous_requests(self):
         for path in ("/saved", "/sync/history/status"):
             with self.subTest(path=path):
