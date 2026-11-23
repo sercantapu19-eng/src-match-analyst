@@ -77,7 +77,7 @@ def store_fixtures(c, fixtures):
 
 def rebuild_one_prediction(c, target, history):
  try:
-  data,message=predict(dict(target),history_index)
+  data,message=predict(dict(target),history)
   if not data:
    c.execute("""UPDATE matches SET match_result='',htft='',over25='',btts='',first_half_btts='',second_half_btts='',
     prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?""",(message,target["id"]))
