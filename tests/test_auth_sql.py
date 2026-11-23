@@ -15,6 +15,44 @@ class AuthSqlCompatibilityTests(unittest.TestCase):
         conn.close()
 
 
+class RegistrationSuccessRateLimitTests(unittest.TestCase):
+    def test_successful_signups_are_limited_per_ip(self):
+        import os
+        import tempfile
+        import auth
+        from app import app
+
+        with tempfile.TemporaryDirectory() as directory:
+            previous_path = os.environ.get("DATABASE_PATH")
+            os.environ["DATABASE_PATH"] = os.path.join(directory, "signup-limit.db")
+            try:
+                auth.init_auth_db()
+                for number in range(10):
+                    client = app.test_client()
+                    with client.session_transaction() as session:
+                        session["_csrf_token"] = "csrf-test"
+                    response = client.post("/register", data={
+                        "email": f"user{number}@example.com",
+                        "password": "long-enough-password",
+                        "csrf_token": "csrf-test",
+                    })
+                    self.assertEqual(response.status_code, 302)
+                blocked_client = app.test_client()
+                with blocked_client.session_transaction() as session:
+                    session["_csrf_token"] = "csrf-test"
+                blocked = blocked_client.post("/register", data={
+                    "email": "eleventh@example.com",
+                    "password": "long-enough-password",
+                    "csrf_token": "csrf-test",
+                })
+                self.assertEqual(blocked.status_code, 429)
+            finally:
+                if previous_path is None:
+                    os.environ.pop("DATABASE_PATH", None)
+                else:
+                    os.environ["DATABASE_PATH"] = previous_path
+
+
 class LoginRateLimitTests(unittest.TestCase):
     def test_registration_is_throttled_after_ten_invalid_attempts(self):
         import os
