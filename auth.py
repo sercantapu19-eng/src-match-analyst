@@ -1,10 +1,12 @@
 """Session-based account routes for SRC Match Analyst."""
 import os
 import sqlite3
-from datetime import datetime
+import hashlib
+import hmac
+from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, current_app
 from werkzeug.security import check_password_hash, generate_password_hash
 
 auth_bp = Blueprint("auth", __name__)
@@ -48,6 +50,54 @@ def init_auth_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
                 saved_at TEXT NOT NULL, UNIQUE(user_id, match_id))""")
+
+
+def _rate_key(kind, value):
+    secret = current_app.secret_key or "missing-secret"
+    raw = f"{kind}:{value}".encode("utf-8")
+    return hmac.new(str(secret).encode("utf-8"), raw, hashlib.sha256).hexdigest()
+
+
+def _auth_rate_limited(email):
+    cutoff = (datetime.utcnow() - timedelta(minutes=15)).isoformat()
+    keys = (_rate_key("email", email), _rate_key("ip", request.remote_addr or "unknown"))
+    with _db() as conn:
+        for key in keys:
+            count = _execute(conn,
+                "SELECT COUNT(*) AS attempts FROM auth_attempts WHERE key_hash=? AND attempted_at>=?",
+                (key, cutoff)).fetchone()["attempts"]
+            if count >= 10:
+                return True
+    return False
+
+
+def _record_auth_failure(email):
+    now = datetime.utcnow().isoformat()
+    with _db() as conn:
+        for kind, value in (("email", email), ("ip", request.remote_addr or "unknown")):
+            _execute(conn, "INSERT INTO auth_attempts(key_hash,attempted_at) VALUES(?,?)",
+                     (_rate_key(kind, value), now))
+
+
+def _clear_auth_failures(email):
+    with _db() as conn:
+        for kind, value in (("email", email), ("ip", request.remote_addr or "unknown")):
+            _execute(conn, "DELETE FROM auth_attempts WHERE key_hash=?", (_rate_key(kind, value),))
+
+
+def _init_rate_limit_table():
+    with _db() as conn:
+        if os.environ.get("DATABASE_URL", "").strip():
+            _execute(conn, """CREATE TABLE IF NOT EXISTS auth_attempts(
+                id BIGSERIAL PRIMARY KEY, key_hash TEXT NOT NULL, attempted_at TEXT NOT NULL)""")
+        else:
+            _execute(conn, """CREATE TABLE IF NOT EXISTS auth_attempts(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL, attempted_at TEXT NOT NULL)""")
+        _execute(conn, "CREATE INDEX IF NOT EXISTS idx_auth_attempts_key_time ON auth_attempts(key_hash,attempted_at)")
+
+
+    _init_rate_limit_table()
+
 
 def current_user_id():
     return session.get("user_id")
@@ -111,11 +161,16 @@ def login():
     if request.method == "POST":
         email = request.form.get("email", "").strip().casefold()
         password = request.form.get("password", "")
+        if _auth_rate_limited(email):
+            flash("Çok fazla başarısız deneme yapıldı. 15 dakika sonra tekrar deneyin.", "error")
+            return render_template("auth.html", mode="login"), 429
         with _db() as conn:
             user = _execute(conn, "SELECT id,email,password_hash FROM users WHERE email=?", (email,)).fetchone()
         if not user or not check_password_hash(user["password_hash"], password):
+            _record_auth_failure(email)
             flash("E-posta veya şifre hatalı.", "error")
             return render_template("auth.html", mode="login")
+        _clear_auth_failures(email)
         session.clear()
         session["user_id"] = user["id"]
         session["user_email"] = user["email"]
