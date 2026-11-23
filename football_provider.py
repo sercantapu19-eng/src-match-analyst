@@ -102,13 +102,28 @@ class FootballProvider:
             else:
                 raw_status = str(self.pick(item, "status_text", "state", default=status_obj)).lower()
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
-            if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H","HT","2H","ET","P","LIVE","INT"):
+            normalized_status = raw_status.strip().replace("-", "_").replace(" ", "_")
+            live_codes = {"1H", "HT", "2H", "ET", "P", "LIVE", "INT", "INPLAY", "IN_PLAY",
+                          "1ST_HALF", "2ND_HALF", "BREAK", "BT", "EXTRA_TIME"}
+            finished_codes = {"FT", "AET", "PEN", "FINISHED", "ENDED", "FULL_TIME", "FULLTIME"}
+            live_words = ("live", "in_progress", "inprogress", "in_play", "playing",
+                          "first_half", "1st_half", "second_half", "2nd_half",
+                          "half_time", "halftime", "extra_time", "penalty_shootout")
+            finished_words = ("finished", "complete", "ended", "full_time", "fulltime",
+                              "match_over", "after_extra_time", "after_penalties")
+            elapsed_value = self.pick(item, "elapsed", "elapsed_minute", "minute", "match_minute",
+                                      default=self.pick(item.get("time", {}) if isinstance(item.get("time"), dict) else {}, "elapsed", "minute"))
+            if any(word in normalized_status for word in live_words) or code in live_codes:
                 state = "live"
             # SportScore sometimes sends compact status text (FT/AET/PEN)
-            # without a separate status code. Do not discard these completed
-            # historical fixtures as scheduled matches.
-            elif raw_status.strip() in ("ft", "aet", "pen", "finished", "ended") or any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT","AET","PEN","FINISHED","ENDED","FULL_TIME","FULLTIME"):
+            # without a separate status code.
+            elif normalized_status in ("ft", "aet", "pen", "finished", "ended") or any(word in normalized_status for word in finished_words) or code in finished_codes:
                 state = "finished"
+            # A positive elapsed minute is stronger evidence of a live match
+            # than an unrecognized provider label. Do not infer status from
+            # score values alone: some feeds populate score fields prematurely.
+            elif elapsed_value not in (None, "", 0, "0"):
+                state = "live"
             else:
                 state = "scheduled"
 
@@ -131,7 +146,7 @@ class FootballProvider:
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "kickoff": self.local_kickoff(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),
-                "elapsed_minute": self.pick(item, "elapsed", "elapsed_minute", "minute", "match_minute", default=self.pick(item.get("time", {}) if isinstance(item.get("time"), dict) else {}, "elapsed", "minute")),
+                "elapsed_minute": elapsed_value,
                 "ht_home": score_int(ht_home), "ht_away": score_int(ht_away)
             })
         return output
