@@ -1,5 +1,5 @@
 import unittest
-from prediction_engine import predict
+from prediction_engine import predict, prepare_history
 
 class PredictionEngineTests(unittest.TestCase):
     def test_prediction_uses_finished_history_for_both_teams(self):
@@ -20,9 +20,13 @@ class PredictionEngineTests(unittest.TestCase):
             "id": "future-1", "home": "Home", "away": "Away",
             "league": "Test League", "status": "scheduled"
         }
-        data, message = predict(match, history)
+        indexed_history = prepare_history(history)
+        data, message = predict(match, indexed_history)
+        second_data, second_message = predict(match, indexed_history)
 
         self.assertIsNone(message)
+        self.assertIsNone(second_message)
+        self.assertEqual(data["predictions"], second_data["predictions"])
         self.assertIsNotNone(data)
         self.assertIn("match_result", data["predictions"])
         self.assertIn("over25", data["predictions"])
