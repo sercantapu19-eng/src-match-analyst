@@ -38,7 +38,7 @@ Integrate a licensed football data provider, timestamped odds sources, team news
 - Saved matches are stored in `user_saved_matches` and scoped to the signed-in account. Existing global `saved_matches` rows are left untouched because they have no reliable owner.
 - Browsing match data remains public. Saving matches requires an account.
 - Fixture sync, historical sync, manual match creation, and result settlement require an administrator account.
-- Set Render environment variable `ADMIN_EMAILS` to a comma-separated list of administrator email addresses before using administrative controls. If it is unset, admin-only operations are denied.
+- Set Render environment variable `ADMIN_USER_IDS` to a comma-separated list of trusted account IDs before using administrative controls. Obtain the IDs from the `users` table after creating the intended administrator accounts. Do not grant administrator privileges by email alone. If it is unset, admin-only operations are denied.
 - Set a long random `SECRET_KEY`; do not use the development fallback in production.
 - Session cookies are HttpOnly and SameSite=Lax; Secure is enabled on Render/production.
 - CSRF validation is enforced for unsafe requests, and failed login attempts are throttled to 10 per 15 minutes per email or IP using database-backed counters.
