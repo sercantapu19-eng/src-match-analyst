@@ -210,7 +210,8 @@ def refresh_live_fixtures():
    if code in ("HT","INT","BREAK","BT"):
     label="Devre Arası"
    elif minute:
-    label=f"Canlı {minute}{"" if minute.endswith(("′", "'")) else "′"}"
+    suffix="" if minute.endswith(("′", "'")) else "′"
+    label=f"Canlı {minute}{suffix}"
    elif code in ("1H","1ST_HALF"):
     label="Canlı · 1. Yarı"
    elif code in ("2H","2ND_HALF"):
