@@ -52,7 +52,7 @@ class FootballProvider:
             if not text:
                 return None
             match = re.fullmatch(
-                r"(\d{1,3})(?:\s*\+\s*(\d{1,2}))?\s*(?:['′’]|m|min|mins|minute|minutes)?",
+                r"(?:live|canli|minute|dakika)?\s*(\d{1,3})(?:\s*\+\s*(\d{1,2}))?\s*(?:['′’]|m|min|mins|minute|minutes)?",
                 text, flags=re.IGNORECASE
             )
             if match:
