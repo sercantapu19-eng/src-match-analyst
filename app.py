@@ -283,8 +283,7 @@ def index():
   live_count=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='live'",(day,)).fetchone()[0]
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
-  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count,
-
+  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count)
 
 @app.post("/sync/fixtures")
 @admin_required
