@@ -87,8 +87,8 @@ def _auth_rate_limited(email):
 
 
 def _record_auth_attempt(email):
-    now = datetime.utcnow().isoformat()
-    prune_before = (datetime.utcnow() - timedelta(days=1)).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+    prune_before = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     with _db() as conn:
         _execute(conn, "DELETE FROM auth_attempts WHERE attempted_at<?", (prune_before,))
         for kind, value in (("email", email), ("ip", request.remote_addr or "unknown")):
@@ -189,7 +189,7 @@ def register():
             if not existing:
                 cur = _execute(conn,
                     "INSERT INTO users(email,password_hash,created_at) VALUES(?,?,?) RETURNING id",
-                    (email, generate_password_hash(password), datetime.utcnow().isoformat()),
+                    (email, generate_password_hash(password), datetime.now(timezone.utc).isoformat()),
                 )
                 user = cur.fetchone()
                 user_id = user["id"] if isinstance(user, dict) else user[0]
