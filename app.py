@@ -64,7 +64,7 @@ def sync_fixtures():
     c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
       home_goals,away_goals,ht_home,ht_away,status_short)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(provider,external_id) DO UPDATE SET
+      ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
       home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
       status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
       ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short""",
