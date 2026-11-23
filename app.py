@@ -21,8 +21,10 @@ def csrf_token():
  return token
 
 @app.context_processor
-def inject_csrf_token():
- return {"csrf_token":csrf_token}
+def inject_template_security():
+ allowed={x.strip().casefold() for x in os.environ.get("ADMIN_EMAILS","").split(",") if x.strip()}
+ email=(session.get("user_email") or "").casefold()
+ return {"csrf_token":csrf_token,"is_admin":bool(current_user_id() and email in allowed)}
 
 @app.before_request
 def enforce_csrf():
@@ -282,7 +284,7 @@ def index():
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count,
-  is_admin=bool(current_user_id() and session.get("user_email", "").casefold() in {x.strip().casefold() for x in os.environ.get("ADMIN_EMAILS", "").split(",") if x.strip()}))
+
 
 @app.post("/sync/fixtures")
 @admin_required
@@ -340,9 +342,10 @@ def sync_fixtures():
   flash(f"Beklenmeyen senkronizasyon hatası: {e}", "error")
  return redirect(url_for("index",date=day))
 
-@app.get("/sync/live/refresh")
+@app.post("/sync/live/refresh")
 def refresh_live_fixtures():
- day=request.args.get("date") or date.today().isoformat()
+ payload=request.get_json(silent=True) or {}
+ day=(request.form.get("date") or payload.get("date") or date.today().isoformat())
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
   # The fixtures endpoint supplies scores/status but often omits the running
@@ -407,7 +410,7 @@ def start_history_sync():
  return jsonify(history_job_payload(job))
 
 @app.get("/sync/history/status")
-@login_required
+@admin_required
 def history_sync_status():
  job_id=request.args.get("job_id",type=int)
  with db() as c:
