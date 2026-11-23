@@ -16,14 +16,18 @@ def _db():
         import psycopg
         from psycopg.rows import dict_row
         conn = psycopg.connect(url, connect_timeout=10, row_factory=dict_row)
-        original_execute = conn.execute
-        conn.execute = lambda query, params=(): original_execute(query.replace("?", "%s"), params)
         return conn
     path = os.environ.get("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "src_match_analyst.db"))
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
+    _execute(conn, "PRAGMA foreign_keys=ON")
     return conn
+
+
+def _execute(conn, query, params=()):
+    if os.environ.get("DATABASE_URL", "").strip():
+        query = query.replace("?", "%s")
+    return conn.execute(query, params)
 
 
 def init_auth_db():
