@@ -2,6 +2,42 @@ import unittest
 from prediction_engine import predict, prepare_history
 
 class PredictionEngineTests(unittest.TestCase):
+    def test_turkish_club_aliases_and_league_label_fallback(self):
+        history = []
+        # The provider uses different spellings from the upcoming fixture.
+        for i in range(6):
+            history.append({
+                "id": f"b{i}", "home": "Başakşehir", "away": f"Rakip {i}",
+                "league": "Türkiye Süper Lig", "status": "finished",
+                "home_goals": 2, "away_goals": 0, "ht_home": 1, "ht_away": 0
+            })
+            history.append({
+                "id": f"c{i}", "home": f"Rakip {i}", "away": "Arca Çorum FK",
+                "league": "Türkiye Süper Lig", "status": "finished",
+                "home_goals": 1, "away_goals": 2, "ht_home": 0, "ht_away": 1
+            })
+        # Ensure the target league has >=12 fixtures, which previously forced
+        # an exact league-label lookup and hid the teams' valid match history.
+        for i in range(12):
+            history.append({
+                "id": f"other{i}", "home": f"Other {i}", "away": f"Club {i}",
+                "league": "Turkish Super League", "status": "finished",
+                "home_goals": 1, "away_goals": 1, "ht_home": 0, "ht_away": 0
+            })
+
+        match = {
+            "id": "future-alias", "home": "Başakşehir Futbol Kulübü",
+            "away": "Çorum Belediyespor", "league": "Turkish Super League",
+            "status": "scheduled"
+        }
+        data, message = predict(match, prepare_history(history))
+        self.assertIsNone(message)
+        self.assertIsNotNone(data)
+        self.assertIn("match_result", data["predictions"])
+        self.assertIn("Son 10 maçlık form", data["notes"])
+        self.assertIn("Başakşehir Futbol Kulübü 6 maç", data["notes"])
+        self.assertIn("Çorum Belediyespor 6 maç", data["notes"])
+
     def test_prediction_uses_finished_history_for_both_teams(self):
         history = []
         for i in range(4):
