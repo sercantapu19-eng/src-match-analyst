@@ -151,7 +151,7 @@ def sync_fixtures():
    targets=c.execute("SELECT * FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchall()
    for target in targets:
     try:
-     data,message=predict(dict(target),history)
+     data,message=predict(dict(target),history_index)
      if not data:
       c.execute("UPDATE matches SET prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?",(message,target["id"]))
       continue
