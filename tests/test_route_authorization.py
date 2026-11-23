@@ -6,7 +6,7 @@ import app as app_module
 
 class RouteAuthorizationTests(unittest.TestCase):
     def setUp(self):
-        self.previous_admin_emails = os.environ.get("ADMIN_EMAILS")
+        self.previous_admin_ids = os.environ.get("ADMIN_USER_IDS")
         os.environ.pop("ADMIN_EMAILS", None)
         app_module.app.config.update(TESTING=True)
         self.client = app_module.app.test_client()
