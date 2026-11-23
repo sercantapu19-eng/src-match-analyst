@@ -39,7 +39,7 @@ def sync_prediction_rows(c,mid):
 def generate_prediction(c, mid):
  m=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
  if not m or m["status"] != "scheduled": return
- history=c.execute("SELECT id,home,away,status,home_goals,away_goals,ht_home,ht_away FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff").fetchall()
+ history=c.execute("SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff").fetchall()
  data,message=predict(dict(m),[dict(x) for x in history])
  if not data:
   c.execute("UPDATE matches SET prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?",(message,mid))
@@ -212,7 +212,7 @@ def history_sync_step():
     next_day=(date.fromisoformat(day)+timedelta(days=1)).isoformat()
     processed=job["processed_days"]+1
     if next_day>job["end_date"]:
-     pred_total=c.execute("SELECT COUNT(*) FROM matches WHERE status='scheduled' AND kickoff>=?",(datetime.utcnow().isoformat(),)).fetchone()[0]
+     pred_total=c.execute("SELECT COUNT(*) FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')",(datetime.utcnow().isoformat(),)).fetchone()[0]
      next_phase="predictions"
      final_status="completed" if pred_total==0 else "running"
     else:
@@ -223,7 +223,7 @@ def history_sync_step():
     if final_status=="completed":
      c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
       ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"]+len(fixtures),"success","180 günlük geçmiş maç verisi tamamlandı"))
-   except ProviderError as exc:
+   except Exception as exc:
     attempts=job["attempts"]+1
     state="error" if attempts>=3 else "running"
     c.execute("UPDATE sync_jobs SET attempts=?,last_error=?,status=?,updated_at=? WHERE id=?",
@@ -232,7 +232,7 @@ def history_sync_step():
    history=[dict(x) for x in c.execute("""SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away
     FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff""").fetchall()]
    batch=c.execute("""SELECT * FROM matches WHERE status='scheduled' AND kickoff>=?
-    ORDER BY kickoff,id LIMIT 8 OFFSET ?""",(datetime.utcnow().isoformat(),job["predictions_processed"])).fetchall()
+    ORDER BY kickoff,id LIMIT 8 OFFSET ?""",(job["predictions_processed"],)).fetchall()
    for target in batch:rebuild_one_prediction(c,target,history)
    processed=job["predictions_processed"]+len(batch)
    done=processed>=job["predictions_total"] or not batch
