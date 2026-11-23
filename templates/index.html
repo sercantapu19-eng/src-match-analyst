@@ -63,7 +63,7 @@
  const day={{day|tojson}};
  async function refreshLiveMinutes(){
   try{
-   const response=await fetch("/sync/live/refresh?date="+encodeURIComponent(day),{cache:"no-store"});
+   const response=await fetch("/sync/live/refresh",{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":document.querySelector('meta[name="csrf-token"]').content},body:JSON.stringify({date:day}),cache:"no-store"});
    if(!response.ok)return;
    const payload=await response.json();
    for(const match of (payload.matches||[])){
