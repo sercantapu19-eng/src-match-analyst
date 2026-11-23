@@ -4,7 +4,7 @@ from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
-from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required
+from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required, is_admin_user
 
 app=Flask(__name__)
 secret_key=os.environ.get("SECRET_KEY","").strip()
@@ -22,9 +22,7 @@ def csrf_token():
 
 @app.context_processor
 def inject_template_security():
- allowed={x.strip().casefold() for x in os.environ.get("ADMIN_EMAILS","").split(",") if x.strip()}
- email=(session.get("user_email") or "").casefold()
- return {"csrf_token":csrf_token,"is_admin":bool(current_user_id() and email in allowed)}
+ return {"csrf_token":csrf_token,"is_admin":is_admin_user()}
 
 @app.before_request
 def enforce_csrf():
