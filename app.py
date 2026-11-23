@@ -1,4 +1,5 @@
 import os, sqlite3, json, time, re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 from football_provider import FootballProvider, ProviderError
@@ -392,6 +393,13 @@ def history_sync_step():
   if job["status"]!="running":return jsonify(history_job_payload(job))
   phase=job["phase"]
   day=job["cursor_date"] if phase=="history" else None
+  history_days=[]
+  if phase=="history":
+   cursor=date.fromisoformat(day)
+   end=date.fromisoformat(job["end_date"])
+   while cursor<=end and len(history_days)<3:
+    history_days.append(cursor.isoformat())
+    cursor+=timedelta(days=1)
   team_names=json.loads(job["team_names"] or "[]") if phase=="team_history" else []
   team_index=job["team_index"] if phase=="team_history" else 0
   team_name=team_names[team_index] if phase=="team_history" and team_index<len(team_names) else None
@@ -401,7 +409,15 @@ def history_sync_step():
  fetch_error=None
  if phase=="history":
   try:
-   fixtures=FootballProvider(os.environ.get("SPORTSCORE_API_KEY")).fixtures(day,status="finished")
+   # Fetch up to three adjacent days concurrently. This cuts the number of
+   # browser round-trips while keeping provider load modest and bounded.
+   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
+   history_fixtures={}
+   with ThreadPoolExecutor(max_workers=3) as pool:
+    futures={pool.submit(provider.fixtures, target_day, status="finished"):target_day for target_day in history_days}
+    for future in as_completed(futures):
+     target_day=futures[future]
+     history_fixtures[target_day]=future.result()
   except Exception as exc:
    fetch_error=exc
  elif phase=="team_history" and team_name:
@@ -425,9 +441,13 @@ def history_sync_step():
     c.execute("UPDATE sync_jobs SET attempts=?,last_error=?,status=?,updated_at=? WHERE id=?",
      (attempts,str(fetch_error),state,datetime.utcnow().isoformat(),job_id))
    else:
-    stats=store_fixtures(c,fixtures or [])
-    next_day=(date.fromisoformat(day)+timedelta(days=1)).isoformat()
-    processed=job["processed_days"]+1
+    totals={"fetched":0,"stored":0,"skipped":0}
+    for target_day in history_days:
+     day_stats=store_fixtures(c,history_fixtures.get(target_day,[]))
+     for key in totals: totals[key]+=day_stats[key]
+    stats=totals
+    next_day=(date.fromisoformat(history_days[-1])+timedelta(days=1)).isoformat()
+    processed=job["processed_days"]+len(history_days)
     names=json.loads(job["team_names"] or "[]")
     if next_day>job["end_date"]:
      rows=c.execute("SELECT home,away FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now') ORDER BY kickoff").fetchall()
