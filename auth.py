@@ -50,6 +50,7 @@ def init_auth_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
                 saved_at TEXT NOT NULL, UNIQUE(user_id, match_id))""")
+    _init_rate_limit_table()
 
 
 def _rate_key(kind, value):
@@ -95,8 +96,6 @@ def _init_rate_limit_table():
                 id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL, attempted_at TEXT NOT NULL)""")
         _execute(conn, "CREATE INDEX IF NOT EXISTS idx_auth_attempts_key_time ON auth_attempts(key_hash,attempted_at)")
 
-
-    _init_rate_limit_table()
 
 
 def current_user_id():
