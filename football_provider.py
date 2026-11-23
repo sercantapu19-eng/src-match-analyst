@@ -159,7 +159,7 @@ class FootballProvider:
 
             kickoff = self.pick(item, "kickoff", "date", "start_time", "time", "datetime", default="")
             if isinstance(kickoff, dict): kickoff = self.pick(kickoff, "utc", "datetime", "date", "timestamp", default="")
-            status_obj = self.pick(item, "status", "match_status", "state", default="upcoming")
+            status_obj = self.pick(item, "status", "match_status", "state", default=None)
             if isinstance(status_obj, dict):
                 raw_status = str(self.pick(status_obj, "long", "name", "label", "description", "status", "type", default="")).lower()
                 code = str(self.pick(status_obj, "short", "code", "status_code", default=self.pick(item, "status_short", "status_code", "period", default=""))).upper()
@@ -340,7 +340,7 @@ class FootballProvider:
             kickoff = self.pick(item, "kickoff", "date", "start_time", "time", "datetime", default="")
             if isinstance(kickoff, dict):
                 kickoff = self.pick(kickoff, "utc", "datetime", "date", "timestamp", default="")
-            status_obj = self.pick(item, "status", "match_status", "state", default="upcoming")
+            status_obj = self.pick(item, "status", "match_status", "state", default=None)
             if isinstance(status_obj, dict):
                 raw_status = str(self.pick(status_obj, "long", "name", "label", "description", "status", "type", default="")).lower()
                 code = str(self.pick(status_obj, "short", "code", "status_code", default=self.pick(item, "status_short", "status_code", "period", default=""))).upper()
