@@ -280,7 +280,7 @@ def detail(mid):
  with db() as c:
   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
   # Lazily rebuild probabilities for fixtures imported before the detailed-market field existed.
-  if m["status"] == "scheduled" and not json.loads(m["market_probabilities"] or "{}"):
+  if m and m["status"] == "scheduled" and not json.loads(m["market_probabilities"] or "{}"):
    generate_prediction(c, mid)
    m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
   rs=c.execute("SELECT * FROM results WHERE match_id=? ORDER BY id",(mid,)).fetchall()
