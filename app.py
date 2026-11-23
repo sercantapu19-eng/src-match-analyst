@@ -1,6 +1,7 @@
 import os, sqlite3, json, time, re, secrets, hmac
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
@@ -280,21 +281,50 @@ init_auth_db()
 
 @app.route("/")
 def index():
- day=request.args.get("date") or date.today().isoformat()
+ # Render's host clock may be UTC; the bulletin date must follow Turkish local time.
+ now_local=datetime.now(ZoneInfo("Europe/Istanbul"))
+ day=request.args.get("date") or now_local.date().isoformat()
  view=request.args.get("view","upcoming")
- if view not in ("upcoming","live","completed"): view="upcoming"
- status_filter={"completed":"finished","live":"live","upcoming":"scheduled"}[view]
+ if view not in ("upcoming","unverified","live","completed"): view="upcoming"
+ status_filter={"completed":"finished","live":"live","upcoming":"scheduled","unverified":"scheduled"}[view]
+ time_filter="datetime(m.kickoff) >= datetime('now')" if view=="upcoming" else (
+  "datetime(m.kickoff) < datetime('now')" if view=="unverified" else "1=1")
+ # Duplicate provider rows are hidden at read time, not deleted. Keep the
+ # oldest row as the canonical display row so saved links and history survive.
  with db() as c:
   uid=current_user_id() or 0
-  ms=c.execute("""SELECT m.*,s.id saved FROM matches m LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=?
-   WHERE substr(m.kickoff,1,10)=? AND m.status=? ORDER BY m.kickoff""",(uid,day,status_filter)).fetchall()
+  ms=c.execute("""WITH ranked AS (
+    SELECT m.*,s.id saved,
+     ROW_NUMBER() OVER (
+      PARTITION BY lower(trim(m.home)),lower(trim(m.away)),lower(trim(m.league)),m.kickoff
+      ORDER BY m.id
+     ) AS duplicate_rank
+    FROM matches m
+    LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=?
+    WHERE substr(m.kickoff,1,10)=? AND m.status=? AND """+time_filter+"""
+   )
+   SELECT * FROM ranked WHERE duplicate_rank=1 ORDER BY kickoff""",(uid,day,status_filter)).fetchall()
   saved=c.execute("SELECT COUNT(*) FROM user_saved_matches WHERE user_id=?",(uid,)).fetchone()[0]
   done=c.execute("SELECT COUNT(*) FROM matches WHERE status='finished'").fetchone()[0]
-  upcoming=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchone()[0]
+  upcoming=c.execute("""SELECT COUNT(*) FROM (
+   SELECT ROW_NUMBER() OVER (
+    PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
+   ) AS duplicate_rank
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
+    AND datetime(kickoff) >= datetime('now')
+  ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
+  unverified=c.execute("""SELECT COUNT(*) FROM (
+   SELECT ROW_NUMBER() OVER (
+    PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
+   ) AS duplicate_rank
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
+    AND datetime(kickoff) < datetime('now')
+  ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
   live_count=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='live'",(day,)).fetchone()[0]
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
-  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count)
+  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
+  unverified_count=unverified,live_count=live_count)
 
 @app.post("/sync/fixtures")
 @admin_required
