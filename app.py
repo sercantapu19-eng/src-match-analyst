@@ -160,6 +160,12 @@ def init_db():
    c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS elapsed_minute TEXT")
    c.execute("ALTER TABLE matches ALTER COLUMN elapsed_minute TYPE TEXT USING elapsed_minute::TEXT")
    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_fixture ON matches(provider,external_id) WHERE external_id <> ''")
+  # Keep day/status filtering and duplicate-fixture ranking off full-table scans.
+  c.execute("CREATE INDEX IF NOT EXISTS idx_matches_status_kickoff_day ON matches(status, (substr(kickoff, 1, 10)), kickoff)")
+  c.execute("CREATE INDEX IF NOT EXISTS idx_matches_dedupe_key ON matches(lower(trim(home)), lower(trim(away)), lower(trim(league)), kickoff)")
+   # Keep day/status filtering and duplicate-fixture ranking off full-table scans.
+   c.execute("CREATE INDEX IF NOT EXISTS idx_matches_status_kickoff_day ON matches(status, (substring(kickoff, 1, 10)), kickoff)")
+   c.execute("CREATE INDEX IF NOT EXISTS idx_matches_dedupe_key ON matches(lower(trim(home)), lower(trim(away)), lower(trim(league)), kickoff)")
    c.execute("""CREATE TABLE IF NOT EXISTS saved_matches(
     id BIGSERIAL PRIMARY KEY,match_id BIGINT NOT NULL UNIQUE REFERENCES matches(id) ON DELETE CASCADE,saved_at TEXT NOT NULL)""")
    c.execute("""CREATE TABLE IF NOT EXISTS results(
@@ -307,6 +313,9 @@ def history_job_payload(job):
 init_db()
 app.register_blueprint(auth_bp)
 init_auth_db()
+# The saved page orders each user's rows by saved_at; this composite index avoids a per-user sort.
+with db() as _index_db:
+ _index_db.execute("CREATE INDEX IF NOT EXISTS idx_user_saved_matches_user_saved_at ON user_saved_matches(user_id, saved_at DESC)")
 
 @app.route("/")
 def index():
