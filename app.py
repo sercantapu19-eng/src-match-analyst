@@ -1,11 +1,39 @@
-import os, sqlite3, json, time, re
+import os, sqlite3, json, time, re, secrets, hmac
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from zoneinfo import ZoneInfo
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
+from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required, is_admin_user
 
-app=Flask(__name__); app.secret_key=os.environ.get("SECRET_KEY","change-this-before-deploy")
+app=Flask(__name__)
+secret_key=os.environ.get("SECRET_KEY","").strip()
+if (os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production") and len(secret_key)<32:
+ raise RuntimeError("Production SECRET_KEY must be configured with at least 32 characters.")
+app.secret_key=secret_key or secrets.token_urlsafe(48)
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production"))
+
+def csrf_token():
+ token=session.get("_csrf_token")
+ if not token:
+  token=secrets.token_urlsafe(32)
+  session["_csrf_token"]=token
+ return token
+
+@app.context_processor
+def inject_template_security():
+ return {"csrf_token":csrf_token,"is_admin":is_admin_user()}
+
+@app.before_request
+def enforce_csrf():
+ if request.method not in ("POST","PUT","PATCH","DELETE"):
+  return
+ expected=session.get("_csrf_token")
+ supplied=request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
+ if not expected or not supplied or not hmac.compare_digest(expected,supplied):
+  abort(400, description="CSRF doğrulaması başarısız.")
+
 DB_PATH=os.environ.get("DATABASE_PATH",os.path.join(os.path.dirname(__file__),"src_match_analyst.db"))
 MARKETS=[("match_result","Maç Sonucu"),("htft","İY/MS"),("over25","2,5 Gol"),("btts","KG"),("first_half_btts","1. Yarı KG"),("second_half_btts","2. Yarı KG"),("corners","Korner Alt/Üst")]
 
@@ -26,7 +54,7 @@ def translate_postgres_sql(query):
  if re.search(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", sql, flags=re.IGNORECASE):
   sql=re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", sql, flags=re.IGNORECASE).rstrip().rstrip(";")
   sql += " ON CONFLICT DO NOTHING"
- sql=re.sub(r"datetime\(([^)]+)\)\s*>=\s*datetime\('now'\)", r"CAST(\1 AS timestamptz) >= NOW()", sql, flags=re.IGNORECASE)
+ sql=re.sub(r"datetime\(([^)]+)\)\s*(>=|<=|<|>)\s*datetime\('now'\)", r"CAST(\1 AS timestamptz) \2 NOW()", sql, flags=re.IGNORECASE)
  return sql
 
 class PostgresConnection:
@@ -41,11 +69,24 @@ class PostgresConnection:
  def execute(self, query, params=()):
   return self._connection.execute(translate_postgres_sql(query), params)
 
+class SQLiteConnectionContext:
+ def __init__(self, connection):
+  self.connection=connection
+ def __enter__(self):
+  return self.connection
+ def __exit__(self, exc_type, exc_value, traceback):
+  try:
+   return self.connection.__exit__(exc_type, exc_value, traceback)
+  finally:
+   self.connection.close()
+
+
 def db():
  database_url=os.environ.get("DATABASE_URL","").strip()
  if database_url:
   return PostgresConnection(database_url)
- c=sqlite3.connect(DB_PATH); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
+ c=sqlite3.connect(DB_PATH); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON")
+ return SQLiteConnectionContext(c)
 
 
 def migrate_legacy_sqlite_to_postgres():
@@ -184,21 +225,50 @@ def generate_prediction(c, mid):
 def provider_ready():
  return True  # SportScore supports public access; API key is optional
 
+def upsert_fixture_record(c, fixture, provider="sportscore"):
+ # Some feed variants omit a stable fixture ID. Fall back to a deterministic
+ # identity so repeated syncs update the existing row instead of inserting it.
+ external_id=str(fixture.get("id") or "").strip()
+ provider_name=str(fixture.get("provider") or provider)
+ if not external_id:
+  existing=c.execute("""SELECT id FROM matches
+   WHERE provider=? AND COALESCE(external_id,'')=''
+    AND lower(trim(home))=lower(trim(?))
+    AND lower(trim(away))=lower(trim(?))
+    AND lower(trim(COALESCE(league,'')))=lower(trim(?))
+    AND kickoff=?
+   ORDER BY id LIMIT 1""",
+   (provider_name,fixture["home"],fixture["away"],fixture.get("league",""),fixture.get("kickoff",""))).fetchone()
+  if existing:
+   c.execute("""UPDATE matches SET league=?,status=?,home_goals=?,away_goals=?,ht_home=?,ht_away=?,
+    status_short=?,elapsed_minute=? WHERE id=?""",
+    (fixture.get("league",""),fixture["status"],fixture.get("home_goals"),fixture.get("away_goals"),
+     fixture.get("ht_home"),fixture.get("ht_away"),fixture.get("status_short",""),
+     fixture.get("elapsed_minute"),existing["id"]))
+   return existing["id"]
+ cur=c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
+  home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
+  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
+  home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
+  status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
+  ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,
+  elapsed_minute=excluded.elapsed_minute RETURNING id""",
+  (fixture["home"],fixture["away"],fixture.get("league",""),fixture.get("kickoff",""),
+   fixture["status"],datetime.utcnow().isoformat(),provider_name,external_id,
+   fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),
+   fixture.get("ht_away"),fixture.get("status_short",""),fixture.get("elapsed_minute")))
+ row=cur.fetchone()
+ return row["id"] if row else None
+
+
 def store_fixtures(c, fixtures):
  stored=0
  for f in fixtures:
   # Historical sync must only persist completed matches with a real full-time score.
   if f["status"] != "finished" or f["home_goals"] is None or f["away_goals"] is None:
    continue
-  c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
-    home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
-    home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
-    status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
-    ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,elapsed_minute=excluded.elapsed_minute""",
-    (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
-     "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
+  upsert_fixture_record(c,f)
   stored+=1
  return {"fetched":len(fixtures),"stored":stored,"skipped":len(fixtures)-stored}
 
@@ -235,25 +305,63 @@ def history_job_payload(job):
 
 
 init_db()
+app.register_blueprint(auth_bp)
+init_auth_db()
 
 @app.route("/")
 def index():
- day=request.args.get("date") or date.today().isoformat()
+ # Render's host clock may be UTC; the bulletin date must follow Turkish local time.
+ now_local=datetime.now(ZoneInfo("Europe/Istanbul"))
+ day=request.args.get("date") or now_local.date().isoformat()
  view=request.args.get("view","upcoming")
- if view not in ("upcoming","live","completed"): view="upcoming"
- status_filter={"completed":"finished","live":"live","upcoming":"scheduled"}[view]
+ if view not in ("upcoming","unverified","live","completed"): view="upcoming"
+ status_filter={"completed":"finished","live":"live","upcoming":"scheduled","unverified":"scheduled"}[view]
+ time_filter="datetime(m.kickoff) >= datetime('now')" if view=="upcoming" else (
+  "datetime(m.kickoff) < datetime('now')" if view=="unverified" else "1=1")
+ # Duplicate provider rows are hidden at read time, not deleted. Keep the
+ # oldest row as the canonical display row so saved links and history survive.
  with db() as c:
-  ms=c.execute("""SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id
-   WHERE substr(m.kickoff,1,10)=? AND m.status=? ORDER BY m.kickoff""",(day,status_filter)).fetchall()
-  saved=c.execute("SELECT COUNT(*) FROM saved_matches").fetchone()[0]
+  uid=current_user_id() or 0
+  ms=c.execute("""WITH ranked AS (
+    SELECT m.*,s.id saved,
+     ROW_NUMBER() OVER (
+      PARTITION BY lower(trim(m.home)),lower(trim(m.away)),lower(trim(m.league)),m.kickoff
+      ORDER BY CASE WHEN s.id IS NOT NULL THEN 0 ELSE 1 END,m.id
+     ) AS duplicate_rank
+    FROM matches m
+    LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=?
+    WHERE substr(m.kickoff,1,10)=? AND m.status=? AND """+time_filter+"""
+   )
+   SELECT * FROM ranked WHERE duplicate_rank=1 ORDER BY kickoff""",(uid,day,status_filter)).fetchall()
+  saved=c.execute("SELECT COUNT(*) FROM user_saved_matches WHERE user_id=?",(uid,)).fetchone()[0]
   done=c.execute("SELECT COUNT(*) FROM matches WHERE status='finished'").fetchone()[0]
-  upcoming=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchone()[0]
-  live_count=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='live'",(day,)).fetchone()[0]
+  upcoming=c.execute("""SELECT COUNT(*) FROM (
+   SELECT ROW_NUMBER() OVER (
+    PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
+   ) AS duplicate_rank
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
+    AND datetime(kickoff) >= datetime('now')
+  ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
+  unverified=c.execute("""SELECT COUNT(*) FROM (
+   SELECT ROW_NUMBER() OVER (
+    PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
+   ) AS duplicate_rank
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
+    AND datetime(kickoff) < datetime('now')
+  ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
+  live_count=c.execute("""SELECT COUNT(*) FROM (
+   SELECT ROW_NUMBER() OVER (
+    PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
+   ) AS duplicate_rank
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='live'
+  ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
-  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count)
+  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
+  unverified_count=unverified,live_count=live_count)
 
 @app.post("/sync/fixtures")
+@admin_required
 def sync_fixtures():
  day=request.form.get("date") or date.today().isoformat()
  try:
@@ -263,15 +371,7 @@ def sync_fixtures():
   fixtures=provider.fixtures(day)
   with db() as c:
    for f in fixtures:
-    c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
-      home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
-      home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
-      status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
-      ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,elapsed_minute=excluded.elapsed_minute""",
-      (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
-       "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
+    upsert_fixture_record(c,f)
    # Read finished-match history once and reuse it for all predictions.
    history=[dict(x) for x in c.execute(
     "SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff"
@@ -308,9 +408,10 @@ def sync_fixtures():
   flash(f"Beklenmeyen senkronizasyon hatası: {e}", "error")
  return redirect(url_for("index",date=day))
 
-@app.get("/sync/live/refresh")
+@app.post("/sync/live/refresh")
 def refresh_live_fixtures():
- day=request.args.get("date") or date.today().isoformat()
+ payload=request.get_json(silent=True) or {}
+ day=(request.form.get("date") or payload.get("date") or date.today().isoformat())
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
   # The fixtures endpoint supplies scores/status but often omits the running
@@ -359,6 +460,7 @@ def refresh_live_fixtures():
   return jsonify({"error":str(exc)}),500
 
 @app.post("/sync/history/start")
+@admin_required
 def start_history_sync():
  today=date.today()
  start=today-timedelta(days=180)
@@ -374,6 +476,7 @@ def start_history_sync():
  return jsonify(history_job_payload(job))
 
 @app.get("/sync/history/status")
+@admin_required
 def history_sync_status():
  job_id=request.args.get("job_id",type=int)
  with db() as c:
@@ -382,6 +485,7 @@ def history_sync_status():
  return jsonify(history_job_payload(job))
 
 @app.post("/sync/history/step")
+@admin_required
 def history_sync_step():
  payload=request.get_json(silent=True) or {}
  job_id=payload.get("job_id")
@@ -504,6 +608,7 @@ def history_sync_step():
  return jsonify(history_job_payload(job))
 
 @app.route("/match/new",methods=["GET","POST"])
+@admin_required
 def new_match():
  if request.method=="POST":
   keys=["home","away","league","kickoff","odds_home","odds_draw","odds_away","htft","over25","btts","first_half_btts","second_half_btts","corners","notes"]
@@ -512,38 +617,46 @@ def new_match():
   with db() as c:
    cur=c.execute("INSERT INTO matches(home,away,league,kickoff,status,odds_home,odds_draw,odds_away,htft,over25,btts,first_half_btts,second_half_btts,corners,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",(d["home"],d["away"],d["league"],d["kickoff"],"scheduled",d["odds_home"],d["odds_draw"],d["odds_away"],d["htft"],d["over25"],d["btts"],d["first_half_btts"],d["second_half_btts"],d["corners"],d["notes"],datetime.utcnow().isoformat()))
    sync_prediction_rows(c,cur.fetchone()["id"])
-  flash("Maç kaydedildi.","success"); return redirect("/")
+  flash("Maç eklendi.","success")
+  return redirect(url_for("index"))
  return render_template("form.html",data={})
 
 @app.post("/match/<int:mid>/save")
+@login_required
 def save(mid):
+ uid=current_user_id()
  with db() as c:
-  if c.execute("SELECT 1 FROM matches WHERE id=?",(mid,)).fetchone():c.execute("INSERT OR IGNORE INTO saved_matches(match_id,saved_at) VALUES(?,?)",(mid,datetime.utcnow().isoformat()))
- return redirect(request.referrer or "/")
+  if c.execute("SELECT 1 FROM matches WHERE id=?",(mid,)).fetchone():
+   c.execute("INSERT INTO user_saved_matches(user_id,match_id,saved_at) VALUES(?,?,?) ON CONFLICT(user_id,match_id) DO NOTHING",(uid,mid,datetime.utcnow().isoformat()))
+ flash("Maç kaydedildi. Kaydedilen maçlar bölümünden her zaman ulaşabilirsin.","success")
+ return redirect(url_for("detail",mid=mid))
 @app.post("/match/<int:mid>/unsave")
+@login_required
 def unsave(mid):
- with db() as c:c.execute("DELETE FROM saved_matches WHERE match_id=?",(mid,))
+ with db() as c:c.execute("DELETE FROM user_saved_matches WHERE user_id=? AND match_id=?",(current_user_id(),mid))
  return redirect(request.referrer or "/")
 @app.route("/match/<int:mid>")
 def detail(mid):
  with db() as c:
-  m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
+  m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=? WHERE m.id=?",(current_user_id() or 0,mid)).fetchone()
   # Lazily rebuild probabilities for fixtures imported before the detailed-market field existed.
   if m and m["status"] == "scheduled" and not json.loads(m["market_probabilities"] or "{}"):
    generate_prediction(c, mid)
-   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
+   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=? WHERE m.id=?",(current_user_id() or 0,mid)).fetchone()
   rs=c.execute("SELECT * FROM results WHERE match_id=? ORDER BY id",(mid,)).fetchall()
   confidence=json.loads(m["prediction_confidence"] or "{}")
   market_probabilities=json.loads(m["market_probabilities"] or "{}")
  if not m:return "Maç bulunamadı",404
  return render_template("detail.html",m=m,results=rs,markets=MARKETS,confidence=confidence,market_probabilities=market_probabilities)
 @app.post("/match/<int:mid>/status")
+@admin_required
 def status(mid):
  st=request.form.get("status","scheduled")
  if st not in ("scheduled","live","finished"):st="scheduled"
  with db() as c:c.execute("UPDATE matches SET status=? WHERE id=?",(st,mid))
  return redirect(url_for("detail",mid=mid))
 @app.post("/match/<int:mid>/result")
+@admin_required
 def result(mid):
  with db() as c:
   for key,label in MARKETS:
@@ -554,8 +667,9 @@ def result(mid):
   c.execute("UPDATE matches SET status='finished' WHERE id=?",(mid,))
  flash("Tahminler sonuçlarla karşılaştırıldı.","success"); return redirect(url_for("detail",mid=mid))
 @app.route("/saved")
+@login_required
 def saved():
- with db() as c:ms=c.execute("SELECT m.* FROM matches m JOIN saved_matches s ON s.match_id=m.id ORDER BY s.saved_at DESC").fetchall()
+ with db() as c:ms=c.execute("SELECT m.* FROM matches m JOIN user_saved_matches s ON s.match_id=m.id WHERE s.user_id=? ORDER BY s.saved_at DESC",(current_user_id(),)).fetchall()
  return render_template("saved.html",matches=ms)
 @app.route("/results")
 def results():

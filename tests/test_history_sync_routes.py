@@ -11,13 +11,24 @@ class HistorySyncRouteTests(unittest.TestCase):
         application.DB_PATH = os.path.join(self.tempdir.name, "test.db")
         application.init_db()
         self.client = application.app.test_client()
+        self.old_admin_ids = os.environ.get("ADMIN_USER_IDS")
+        os.environ.pop("ADMIN_EMAILS", None)
+        os.environ["ADMIN_USER_IDS"] = "1"
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["user_email"] = "admin@example.com"
+            session["_csrf_token"] = "test-csrf-token"
 
     def tearDown(self):
         application.DB_PATH = self.old_db_path
+        if self.old_admin_ids is None:
+            os.environ.pop("ADMIN_USER_IDS", None)
+        else:
+            os.environ["ADMIN_USER_IDS"] = self.old_admin_ids
         self.tempdir.cleanup()
 
     def test_start_creates_resumable_history_job(self):
-        response = self.client.post("/sync/history/start")
+        response = self.client.post("/sync/history/start", headers={"X-CSRF-Token": "test-csrf-token"})
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["status"], "running")
@@ -52,7 +63,7 @@ class HistorySyncRouteTests(unittest.TestCase):
                 }]
 
         with patch.object(application, "FootballProvider", FakeProvider):
-            response = self.client.post("/sync/history/step", json={"job_id": job_id})
+            response = self.client.post("/sync/history/step", json={"job_id": job_id}, headers={"X-CSRF-Token": "test-csrf-token"})
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
@@ -66,14 +77,14 @@ class HistorySyncRouteTests(unittest.TestCase):
         self.assertEqual(tuple(imported), (2, 1))
 
     def test_status_endpoint_restores_last_job(self):
-        started = self.client.post("/sync/history/start").get_json()
+        started = self.client.post("/sync/history/start", headers={"X-CSRF-Token": "test-csrf-token"}).get_json()
         restored = self.client.get("/sync/history/status").get_json()
         self.assertEqual(restored["job_id"], started["job_id"])
         self.assertEqual(restored["phase"], "history")
 
     def test_second_start_reuses_active_job(self):
-        first = self.client.post("/sync/history/start").get_json()
-        second = self.client.post("/sync/history/start").get_json()
+        first = self.client.post("/sync/history/start", headers={"X-CSRF-Token": "test-csrf-token"}).get_json()
+        second = self.client.post("/sync/history/start", headers={"X-CSRF-Token": "test-csrf-token"}).get_json()
         self.assertEqual(first["job_id"], second["job_id"])
 
     def test_live_refresh_updates_minute_and_score(self):
@@ -101,7 +112,7 @@ class HistorySyncRouteTests(unittest.TestCase):
                 }]
 
         with patch.object(application, "FootballProvider", FakeProvider):
-            response = self.client.get("/sync/live/refresh?date=2026-11-23")
+            response = self.client.post("/sync/live/refresh", json={"date": "2026-11-23"}, headers={"X-CSRF-Token": "test-csrf-token"})
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()

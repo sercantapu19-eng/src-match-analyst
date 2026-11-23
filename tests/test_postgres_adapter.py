@@ -22,6 +22,12 @@ class PostgresAdapterTests(unittest.TestCase):
         )
         self.assertIn("CAST(kickoff AS timestamptz) >= NOW()", sql)
 
+    def test_sqlite_past_datetime_comparison_becomes_postgres_timestamp_query(self):
+        sql = application.translate_postgres_sql(
+            "SELECT * FROM matches WHERE datetime(kickoff)<datetime('now')"
+        )
+        self.assertIn("CAST(kickoff AS timestamptz) < NOW()", sql)
+
     def test_hybrid_row_supports_named_and_positional_access(self):
         row = application.HybridRow(["id", "status"], [17, "saved"])
         self.assertEqual(row["id"], 17)
