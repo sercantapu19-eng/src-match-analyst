@@ -2,7 +2,7 @@ import os, sqlite3, json, time
 from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 from football_provider import FootballProvider, ProviderError
-from prediction_engine import predict
+from prediction_engine import predict, prepare_history
 
 app=Flask(__name__); app.secret_key=os.environ.get("SECRET_KEY","change-this-before-deploy")
 DB_PATH=os.environ.get("DATABASE_PATH",os.path.join(os.path.dirname(__file__),"src_match_analyst.db"))
@@ -147,10 +147,11 @@ def sync_fixtures():
    history=[dict(x) for x in c.execute(
     "SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff"
    ).fetchall()]
+   history_index=prepare_history(history)
    targets=c.execute("SELECT * FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchall()
    for target in targets:
     try:
-     data,message=predict(dict(target),history)
+     data,message=predict(dict(target),history_index)
      if not data:
       c.execute("UPDATE matches SET prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?",(message,target["id"]))
       continue
@@ -238,9 +239,10 @@ def history_sync_step():
   elif phase=="predictions":
    history=[dict(x) for x in c.execute("""SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away
     FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff""").fetchall()]
+   history_index=prepare_history(history)
    batch=c.execute("""SELECT * FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')
     ORDER BY kickoff,id LIMIT 8 OFFSET ?""",(job["predictions_processed"],)).fetchall()
-   for target in batch:rebuild_one_prediction(c,target,history)
+   for target in batch:rebuild_one_prediction(c,target,history_index)
    processed=job["predictions_processed"]+len(batch)
    done=processed>=job["predictions_total"] or not batch
    c.execute("UPDATE sync_jobs SET predictions_processed=?,status=?,updated_at=? WHERE id=?",
