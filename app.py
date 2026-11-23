@@ -160,6 +160,9 @@ def init_db():
    c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS elapsed_minute TEXT")
    c.execute("ALTER TABLE matches ALTER COLUMN elapsed_minute TYPE TEXT USING elapsed_minute::TEXT")
    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_fixture ON matches(provider,external_id) WHERE external_id <> ''")
+   # PostgreSQL expression indexes for the date-filtered match list.
+   c.execute("CREATE INDEX IF NOT EXISTS idx_matches_status_kickoff_day ON matches(status, (substring(kickoff, 1, 10)), kickoff)")
+   c.execute("CREATE INDEX IF NOT EXISTS idx_matches_dedupe_key ON matches(lower(trim(home)), lower(trim(away)), lower(trim(league)), kickoff)")
    c.execute("""CREATE TABLE IF NOT EXISTS saved_matches(
     id BIGSERIAL PRIMARY KEY,match_id BIGINT NOT NULL UNIQUE REFERENCES matches(id) ON DELETE CASCADE,saved_at TEXT NOT NULL)""")
    c.execute("""CREATE TABLE IF NOT EXISTS results(
@@ -192,6 +195,9 @@ def init_db():
   for name,typ in [("provider","TEXT DEFAULT ''"),("external_id","TEXT DEFAULT ''"),("home_goals","INTEGER"),("away_goals","INTEGER"),("ht_home","INTEGER"),("ht_away","INTEGER"),("status_short","TEXT DEFAULT ''"),("elapsed_minute","INTEGER"),("match_result","TEXT DEFAULT ''"),("prediction_confidence","TEXT DEFAULT '{}'"),("market_probabilities","TEXT DEFAULT '{}'"),("prediction_message","TEXT DEFAULT ''"),("analysis_notes","TEXT DEFAULT ''")]:
    if name not in cols: c.execute(f"ALTER TABLE matches ADD COLUMN {name} {typ}")
   c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_fixture ON matches(provider,external_id) WHERE external_id <> ''")
+  # SQLite equivalents of the PostgreSQL match-list indexes.
+  c.execute("CREATE INDEX IF NOT EXISTS idx_matches_status_kickoff_day ON matches(status, substr(kickoff, 1, 10), kickoff)")
+  c.execute("CREATE INDEX IF NOT EXISTS idx_matches_dedupe_key ON matches(lower(trim(home)), lower(trim(away)), lower(trim(league)), kickoff)")
   c.execute("""CREATE TABLE IF NOT EXISTS saved_matches(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL UNIQUE,saved_at TEXT NOT NULL,FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
   c.execute("""CREATE TABLE IF NOT EXISTS results(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL,market TEXT NOT NULL,prediction TEXT NOT NULL,actual TEXT DEFAULT '',outcome TEXT DEFAULT 'pending',FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,UNIQUE(match_id,market))""")
   c.execute("""CREATE TABLE IF NOT EXISTS sync_log(id INTEGER PRIMARY KEY AUTOINCREMENT,provider TEXT,day TEXT,ran_at TEXT,fixtures_count INTEGER DEFAULT 0,status TEXT,message TEXT)""")
@@ -307,6 +313,9 @@ def history_job_payload(job):
 init_db()
 app.register_blueprint(auth_bp)
 init_auth_db()
+# The saved page orders each user's rows by saved_at; this composite index avoids a per-user sort.
+with db() as _index_db:
+ _index_db.execute("CREATE INDEX IF NOT EXISTS idx_user_saved_matches_user_saved_at ON user_saved_matches(user_id, saved_at DESC)")
 
 @app.route("/")
 def index():
