@@ -66,3 +66,84 @@
 .coupon-pct{font-weight:700;color:#7ce0a7}
 @media(max-width:850px){.coupon-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.coupon-filters .wide{grid-column:1/-1}}
 @media(max-width:480px){.coupon-filters{grid-template-columns:1fr}.coupon-filters .wide{grid-column:auto}}
+
+
+/* SRC ESPN-inspired light theme */
+:root{
+ --panel:#ffffff;--line:#e3e8ef;--text:#202833;--muted:#687586;
+ --src-red:#d71920;--src-blue:#174a7e;--src-bg:#f3f5f8;
+}
+html{color-scheme:light}
+body{background:var(--src-bg);color:var(--text)}
+.sidebar{background:#fff;border-right:1px solid var(--line);box-shadow:0 2px 12px rgba(24,39,58,.05)}
+.brand{color:#17212d}
+.brand small{color:#687586}
+.sidebar a{color:#344255}
+.sidebar a:hover{background:#fff0f0;color:var(--src-red)}
+main{color:var(--text)}
+header{border-color:var(--line)}
+.hero{background:#fff;border:1px solid var(--line);box-shadow:0 5px 18px rgba(24,39,58,.045)}
+.eyebrow{color:var(--src-red)}
+small,footer{color:var(--muted)}
+.stats div,.coupon-summary div{background:#fff;border:1px solid var(--line)}
+.stats b,.coupon-summary b{color:var(--src-blue)}
+.panel,.table-wrap,.empty{background:#fff;border:1px solid var(--line);box-shadow:0 3px 14px rgba(24,39,58,.035)}
+.sync-form input,.coupon-filters input,.coupon-filters select{
+ background:#fff;color:#202833;border:1px solid #cbd4df
+}
+.sync-form input:focus,.coupon-filters input:focus,.coupon-filters select:focus{
+ outline:2px solid rgba(215,25,32,.18);border-color:var(--src-red)
+}
+.status-ok{color:#16834a}.status-warn{color:#a76500}
+.button{background:var(--src-red);color:#fff}
+.button:hover{background:#b9141a}
+.button.secondary{background:#eef1f5;color:#293647;border:1px solid #d8dfe8}
+table{color:#263241}
+td,th{border-bottom:1px solid #e8edf2}
+th{color:#647286;background:#f7f8fa}
+.bulletin-tabs{border-color:var(--line)}
+.bulletin-tabs a{background:#fff;border-color:var(--line);color:#344255}
+.bulletin-tabs a.active{background:var(--src-red);border-color:var(--src-red);color:#fff}
+.bulletin-tabs span{background:#f0f2f5;color:#526174}
+.mobile-quick-nav a{background:#fff;border-color:var(--line);color:#344255}
+.coupon-filters label{color:#536174}
+.coupon-note{border-left-color:#e2a02b;background:#fff8e9;color:#6c4a12}
+.coupon-pct{color:#16834a}
+.flash{background:#e8f6ed;color:#17663a;border:1px solid #c5e8d0}
+footer a{color:var(--src-blue)}
+@media(max-width:850px){
+ .sidebar{background:#fff;border-bottom:1px solid var(--line)}
+ .mobile-quick-nav a{background:#fff;color:#344255}
+}
+
+
+/* Mobile bulletin: convert the wide fixture table into readable stacked cards. */
+@media(max-width:700px){
+ .table-wrap{overflow:visible;padding:10px}
+ .table-wrap table{display:block;width:100%;min-width:0;table-layout:fixed}
+ .table-wrap table tr:first-child{display:none}
+ .table-wrap table tr[data-match-id]{
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:0 12px;padding:12px;margin:0 0 10px;
+  border:1px solid var(--line);border-radius:10px;background:#fff;
+ }
+ .table-wrap table tr[data-match-id] td{
+  display:block;min-width:0;padding:5px 2px;border:0;
+  font-size:14px;line-height:1.35;overflow-wrap:anywhere;white-space:normal;
+ }
+ .table-wrap table tr[data-match-id] td:nth-child(1){grid-column:1;grid-row:1;color:var(--src-red);font-weight:700}
+ .table-wrap table tr[data-match-id] td:nth-child(2){grid-column:1/-1;grid-row:2;font-size:16px;font-weight:700;color:#202833;padding:8px 2px}
+ .table-wrap table tr[data-match-id] td:nth-child(3){grid-column:1/-1;grid-row:3;color:#687586;font-size:13px}
+ .table-wrap table tr[data-match-id] td:nth-child(4){grid-column:1;grid-row:4;color:#344255}
+ .table-wrap table tr[data-match-id] td:nth-child(5){grid-column:2;grid-row:4;text-align:right;font-weight:700}
+ .table-wrap table tr[data-match-id] td:nth-child(6){grid-column:1/-1;grid-row:5;padding-top:9px}
+ .table-wrap table tr[data-match-id] td:nth-child(6) a{display:inline-flex;align-items:center;justify-content:center;background:var(--src-red);color:#fff;text-decoration:none;border-radius:7px;padding:8px 13px;font-weight:700}
+ .bulletin-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible;gap:8px}
+ .bulletin-tabs a{white-space:normal;justify-content:space-between;min-width:0;font-size:12px;padding:10px}
+ .bulletin-tabs span{flex:0 0 auto}
+}
+@media(max-width:380px){
+ .table-wrap table tr[data-match-id]{grid-template-columns:minmax(0,1fr) minmax(0,.8fr);gap:0 7px}
+ .table-wrap table tr[data-match-id] td{font-size:13px}
+ .table-wrap table tr[data-match-id] td:nth-child(2){font-size:15px}
+}
