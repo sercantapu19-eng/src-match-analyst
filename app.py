@@ -1,7 +1,7 @@
 import os, sqlite3, json, time, re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
 from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required
@@ -256,7 +256,7 @@ def index():
   live_count=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='live'",(day,)).fetchone()[0]
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
-  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count,\n  is_admin=bool(current_user_id() and (session_email:=__import__("flask").session.get("user_email", "")).casefold() in {x.strip().casefold() for x in os.environ.get("ADMIN_EMAILS", "").split(",") if x.strip()}))
+  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count,\n  is_admin=bool(current_user_id() and session.get("user_email", "").casefold() in {x.strip().casefold() for x in os.environ.get("ADMIN_EMAILS", "").split(",") if x.strip()}))
 
 @admin_required
 @app.post("/sync/fixtures")
