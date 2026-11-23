@@ -4,6 +4,7 @@ from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
+from auth import auth_bp, current_user_id, init_auth_db, login_required
 
 app=Flask(__name__); app.secret_key=os.environ.get("SECRET_KEY","change-this-before-deploy")
 DB_PATH=os.environ.get("DATABASE_PATH",os.path.join(os.path.dirname(__file__),"src_match_analyst.db"))
@@ -235,6 +236,8 @@ def history_job_payload(job):
 
 
 init_db()
+app.register_blueprint(auth_bp)
+init_auth_db()
 
 @app.route("/")
 def index():
@@ -243,9 +246,10 @@ def index():
  if view not in ("upcoming","live","completed"): view="upcoming"
  status_filter={"completed":"finished","live":"live","upcoming":"scheduled"}[view]
  with db() as c:
-  ms=c.execute("""SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id
-   WHERE substr(m.kickoff,1,10)=? AND m.status=? ORDER BY m.kickoff""",(day,status_filter)).fetchall()
-  saved=c.execute("SELECT COUNT(*) FROM saved_matches").fetchone()[0]
+  uid=current_user_id() or 0
+  ms=c.execute("""SELECT m.*,s.id saved FROM matches m LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=?
+   WHERE substr(m.kickoff,1,10)=? AND m.status=? ORDER BY m.kickoff""",(uid,day,status_filter)).fetchall()
+  saved=c.execute("SELECT COUNT(*) FROM user_saved_matches WHERE user_id=?",(uid,)).fetchone()[0]
   done=c.execute("SELECT COUNT(*) FROM matches WHERE status='finished'").fetchone()[0]
   upcoming=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchone()[0]
   live_count=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='live'",(day,)).fetchone()[0]
@@ -516,18 +520,22 @@ def new_match():
  return render_template("form.html",data={})
 
 @app.post("/match/<int:mid>/save")
+@login_required
 def save(mid):
+ uid=current_user_id()
  with db() as c:
-  if c.execute("SELECT 1 FROM matches WHERE id=?",(mid,)).fetchone():c.execute("INSERT OR IGNORE INTO saved_matches(match_id,saved_at) VALUES(?,?)",(mid,datetime.utcnow().isoformat()))
+  if c.execute("SELECT 1 FROM matches WHERE id=?",(mid,)).fetchone():
+   c.execute("INSERT INTO user_saved_matches(user_id,match_id,saved_at) VALUES(?,?,?) ON CONFLICT(user_id,match_id) DO NOTHING",(uid,mid,datetime.utcnow().isoformat()))
  return redirect(request.referrer or "/")
 @app.post("/match/<int:mid>/unsave")
+@login_required
 def unsave(mid):
- with db() as c:c.execute("DELETE FROM saved_matches WHERE match_id=?",(mid,))
+ with db() as c:c.execute("DELETE FROM user_saved_matches WHERE user_id=? AND match_id=?",(current_user_id(),mid))
  return redirect(request.referrer or "/")
 @app.route("/match/<int:mid>")
 def detail(mid):
  with db() as c:
-  m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
+  m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=? WHERE m.id=?",(current_user_id() or 0,mid)).fetchone()
   # Lazily rebuild probabilities for fixtures imported before the detailed-market field existed.
   if m and m["status"] == "scheduled" and not json.loads(m["market_probabilities"] or "{}"):
    generate_prediction(c, mid)
@@ -554,8 +562,9 @@ def result(mid):
   c.execute("UPDATE matches SET status='finished' WHERE id=?",(mid,))
  flash("Tahminler sonuçlarla karşılaştırıldı.","success"); return redirect(url_for("detail",mid=mid))
 @app.route("/saved")
+@login_required
 def saved():
- with db() as c:ms=c.execute("SELECT m.* FROM matches m JOIN saved_matches s ON s.match_id=m.id ORDER BY s.saved_at DESC").fetchall()
+ with db() as c:ms=c.execute("SELECT m.* FROM matches m JOIN user_saved_matches s ON s.match_id=m.id WHERE s.user_id=? ORDER BY s.saved_at DESC",(current_user_id(),)).fetchall()
  return render_template("saved.html",matches=ms)
 @app.route("/results")
 def results():
