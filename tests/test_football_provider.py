@@ -64,5 +64,53 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(rows[1]["ht_home"], 1)
         self.assertEqual(rows[1]["ht_away"], 1)
 
+    def test_team_schedule_payload_parses_widget_match_shape(self):
+        provider = FootballProvider()
+        rows = provider.parse_fixtures_payload({
+            "team": {"name": "Başakşehir", "slug": "istanbul-basaksehir"},
+            "matches": [{
+                "slug": "basaksehir-vs-corum",
+                "home": {"name": "Başakşehir", "score": 2},
+                "away": {"name": "Çorum FK", "score": 1},
+                "league": {"name": "Turkish Super League"},
+                "time": "2026-11-01T17:00:00Z",
+                "status": "FT",
+                "status_text": "Finished",
+                "home_score": 2,
+                "away_score": 1,
+                "halftime": {"home": 1, "away": 0}
+            }]
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], "basaksehir-vs-corum")
+        self.assertEqual(rows[0]["status"], "finished")
+        self.assertEqual(rows[0]["home_goals"], 2)
+        self.assertEqual(rows[0]["away_goals"], 1)
+        self.assertEqual(rows[0]["ht_home"], 1)
+        self.assertEqual(rows[0]["ht_away"], 0)
+
+    def test_team_search_accepts_only_exact_unique_team_slug(self):
+        provider = FootballProvider()
+        class SearchSession:
+            def get(self, url, params, timeout):
+                class Response:
+                    status_code = 200
+                    ok = True
+                    text = ""
+                    def json(self):
+                        return {"teams": [
+                            {"name": "Başakşehir", "slug": "basaksehir"},
+                            {"name": "Başakşehirspor", "slug": "basaksehirspor"}
+                        ]}
+                self.params = params
+                self.timeout = timeout
+                return Response()
+        fake = SearchSession()
+        provider.session = fake
+        self.assertEqual(provider.search_team_slug("Başakşehir"), "basaksehir")
+        self.assertEqual(fake.params["q"], "Başakşehir")
+        self.assertEqual(provider._normalize_search_name("İstanbul Başakşehir Futbol Kulübü"), "basaksehir")
+        self.assertEqual(provider._normalize_search_name("Arca Çorum FK"), "corum")
+
 if __name__ == "__main__":
     unittest.main()

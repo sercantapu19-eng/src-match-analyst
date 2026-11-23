@@ -52,6 +52,14 @@ def _normalize_team(value):
         if compact in aliases:
             return canonical
 
+    # Feeds may append city, sponsor, legal-form or club descriptors in
+    # different orders (e.g. "Istanbul Basaksehir Futbol Kulubu").
+    # Match the distinctive club token, not arbitrary substring fragments.
+    if "basaksehir" in words:
+        return "basaksehir"
+    if "corum" in words:
+        return "corum"
+
     removable = {
         "fc", "afc", "cf", "sc", "fk", "sk", "ks", "club", "football",
         "soccer", "futbol", "kulubu", "belediye", "belediyespor", "spor",

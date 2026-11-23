@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 BASE_URL = "https://sportscore.com/api/v1/fixtures/"
+SEARCH_URL = "https://sportscore.com/api/v1/search/"
+TEAM_URL = "https://sportscore.com/api/widget/team/"
 
 class ProviderError(Exception):
     pass
@@ -130,3 +132,193 @@ class FootballProvider:
                 "ht_home": score_int(ht_home), "ht_away": score_int(ht_away)
             })
         return output
+
+
+    @staticmethod
+    def _extract_rows(payload):
+        """Accept both fixture API and team-widget response envelopes."""
+        if isinstance(payload, list):
+            return payload
+        if not isinstance(payload, dict):
+            return []
+        keys = ("fixtures", "matches", "results", "data", "response", "schedule",
+                "past_fixtures", "upcoming_fixtures", "events")
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict):
+                nested = FootballProvider._extract_rows(value)
+                if nested:
+                    return nested
+        # Some envelopes put the schedule one level under "team".
+        for value in payload.values():
+            if isinstance(value, dict):
+                nested = FootballProvider._extract_rows(value)
+                if nested:
+                    return nested
+        return []
+
+    @staticmethod
+    def _normalize_search_name(value):
+        import re
+        import unicodedata
+        raw = str(value or "").casefold().translate(str.maketrans({
+            "ı": "i", "ç": "c", "ğ": "g", "ö": "o", "ş": "s", "ü": "u"
+        }))
+        raw = unicodedata.normalize("NFKD", raw)
+        raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
+        words = re.findall(r"[a-z0-9]+", raw)
+        removable = {"fc", "afc", "cf", "sc", "fk", "sk", "club", "football",
+                     "futbol", "kulubu", "belediye", "belediyespor", "spor", "istanbul", "arca"}
+        return " ".join(word for word in words if word not in removable)
+
+    def search_team_slug(self, team_name):
+        """Resolve a club to a SportScore team slug; never guess an ambiguous result."""
+        try:
+            response = self.session.get(
+                SEARCH_URL,
+                params={"sport": "football", "q": team_name, "limit": 20},
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise ProviderError(f"SportScore takım arama bağlantı hatası: {exc}") from exc
+        if response.status_code == 429:
+            raise ProviderError("SportScore istek sınırı doldu.")
+        if response.status_code in (401, 403):
+            raise ProviderError("SportScore takım arama erişimi reddedildi.")
+        if not response.ok:
+            raise ProviderError(f"SportScore takım arama HTTP {response.status_code}.")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ProviderError("SportScore takım araması geçerli JSON döndürmedi.") from exc
+
+        target = self._normalize_search_name(team_name)
+        candidates = []
+        seen = set()
+
+        def walk(value):
+            if isinstance(value, dict):
+                name = self.pick(value, "name", "team_name", "short_name", "display_name")
+                slug = self.pick(value, "slug", "team_slug")
+                if name and slug:
+                    key = (str(name), str(slug))
+                    if key not in seen:
+                        seen.add(key)
+                        candidates.append((self._normalize_search_name(name), str(slug)))
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        walk(payload)
+        exact = [slug for name, slug in candidates if name == target]
+        if len(set(exact)) == 1:
+            return exact[0]
+        # Search results can use a formal name while our fixture uses a short
+        # club name. Only accept a unique strong token match.
+        target_tokens = set(target.split())
+        scored = []
+        for name, slug in candidates:
+            tokens = set(name.split())
+            overlap = len(target_tokens & tokens) / max(1, len(target_tokens | tokens))
+            if overlap >= 0.75:
+                scored.append((overlap, slug))
+        if scored:
+            best = max(score for score, _ in scored)
+            best_slugs = {slug for score, slug in scored if score == best}
+            if len(best_slugs) == 1:
+                return next(iter(best_slugs))
+        return None
+
+    def parse_fixtures_payload(self, payload):
+        """Parse serialized matches from either /fixtures or /team."""
+        rows = self._extract_rows(payload)
+        output = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            home = self.pick(item, "home", "home_team", "team_home", default={})
+            away = self.pick(item, "away", "away_team", "team_away", default={})
+            if isinstance(home, dict) and isinstance(home.get("team"), dict):
+                home = home["team"]
+            if isinstance(away, dict) and isinstance(away.get("team"), dict):
+                away = away["team"]
+            home_name = self.team_name(home, "Ev sahibi")
+            away_name = self.team_name(away, "Deplasman")
+            if home_name == "Ev sahibi" or away_name == "Deplasman":
+                continue
+            league_obj = self.pick(item, "competition", "league", "tournament", default={})
+            league = self.team_name(league_obj, "") if isinstance(league_obj, dict) else str(league_obj or "")
+            country_obj = item.get("country") or (league_obj.get("country") if isinstance(league_obj, dict) else "")
+            country = self.team_name(country_obj, "") if isinstance(country_obj, dict) else str(country_obj or "")
+            if country and league:
+                league = f"{country} · {league}"
+            kickoff = self.pick(item, "kickoff", "date", "start_time", "time", "datetime", default="")
+            if isinstance(kickoff, dict):
+                kickoff = self.pick(kickoff, "utc", "datetime", "date", "timestamp", default="")
+            status_obj = self.pick(item, "status", "match_status", "state", default="upcoming")
+            if isinstance(status_obj, dict):
+                raw_status = str(self.pick(status_obj, "long", "name", "label", "description", "status", "type", default="")).lower()
+                code = str(self.pick(status_obj, "short", "code", "status_code", default=self.pick(item, "status_short", "status_code", "period", default=""))).upper()
+            else:
+                raw_status = str(self.pick(item, "status_text", "state", default=status_obj)).lower()
+                code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
+            if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT"):
+                state = "live"
+            elif raw_status.strip() in ("ft", "aet", "pen", "finished", "ended") or any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT", "AET", "PEN", "FINISHED", "ENDED", "FULL_TIME", "FULLTIME"):
+                state = "finished"
+            else:
+                state = "scheduled"
+            score = item.get("score") if isinstance(item.get("score"), dict) else {}
+            scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
+            full = self.pick(score, "full_time", "fulltime", "ft", default=self.pick(scores, "full_time", "fulltime", "ft", default={}))
+            if not isinstance(full, dict):
+                full = {}
+            hg = self.pick(item, "home_score", "home_goals", default=self.pick(home if isinstance(home, dict) else {}, "score", default=self.pick(score, "home", "home_score", default=self.pick(full, "home", "home_score", default=self.pick(scores, "home", "home_score")))))
+            ag = self.pick(item, "away_score", "away_goals", default=self.pick(away if isinstance(away, dict) else {}, "score", default=self.pick(score, "away", "away_score", default=self.pick(full, "away", "away_score", default=self.pick(scores, "away", "away_score")))))
+            ht = item.get("halftime") if isinstance(item.get("halftime"), dict) else item.get("half_time") if isinstance(item.get("half_time"), dict) else scores.get("halftime", {}) if isinstance(scores.get("halftime"), dict) else score.get("halftime", {}) if isinstance(score.get("halftime"), dict) else score.get("half_time", {}) if isinstance(score.get("half_time"), dict) else {}
+            ht_home = self.pick(item, "ht_home", "home_ht", default=self.pick(ht, "home", "home_score"))
+            ht_away = self.pick(item, "ht_away", "away_ht", default=self.pick(ht, "away", "away_score"))
+            def score_int(value):
+                try:
+                    return int(value) if value is not None and str(value).strip() != "" else None
+                except (TypeError, ValueError):
+                    return None
+            output.append({
+                "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
+                "home": str(home_name), "away": str(away_name), "league": league,
+                "kickoff": self.local_kickoff(kickoff), "status": state,
+                "status_short": code or raw_status.upper()[:12],
+                "home_goals": score_int(hg), "away_goals": score_int(ag),
+                "elapsed_minute": self.pick(item, "elapsed", "elapsed_minute", "minute", "match_minute", default=self.pick(item.get("time", {}) if isinstance(item.get("time"), dict) else {}, "elapsed", "minute")),
+                "ht_home": score_int(ht_home), "ht_away": score_int(ht_away)
+            })
+        return output
+
+    def team_fixtures_for_team(self, team_name, limit=30):
+        """Fetch up to 30 recent/upcoming fixtures for one named club."""
+        slug = self.search_team_slug(team_name)
+        if not slug:
+            return []
+        try:
+            response = self.session.get(
+                TEAM_URL,
+                params={"sport": "football", "slug": slug, "limit": min(30, max(1, int(limit)))},
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise ProviderError(f"{team_name} fikstür bağlantı hatası: {exc}") from exc
+        if response.status_code == 429:
+            raise ProviderError("SportScore istek sınırı doldu.")
+        if response.status_code in (401, 403):
+            raise ProviderError("SportScore takım fikstürü erişimi reddedildi.")
+        if not response.ok:
+            raise ProviderError(f"SportScore takım fikstürü HTTP {response.status_code}.")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ProviderError("SportScore takım fikstürü geçerli JSON döndürmedi.") from exc
+        return self.parse_fixtures_payload(payload)
