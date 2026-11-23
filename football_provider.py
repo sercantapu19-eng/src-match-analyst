@@ -1,25 +1,93 @@
 import requests
-BASE_URL="https://v3.football.api-sports.io"
-class ProviderError(Exception): pass
+
+BASE_URL = "https://sportscore.com/api/v1/fixtures/"
+
+class ProviderError(Exception):
+    pass
+
 class FootballProvider:
-    def __init__(self,api_key):
-        if not api_key: raise ProviderError("API_FOOTBALL_KEY eksik.")
-        self.session=requests.Session()
-        self.session.headers.update({"x-apisports-key":api_key})
-    def fixtures(self,day):
+    def __init__(self, api_key=None):
+        self.session = requests.Session()
+        self.session.headers.update({"Accept": "application/json", "User-Agent": "SRC-Match-Analyst/1.0"})
+        if api_key:
+            self.session.headers["X-Api-Key"] = api_key
+
+    @staticmethod
+    def pick(obj, *keys, default=None):
+        if isinstance(obj, dict):
+            for key in keys:
+                value = obj.get(key)
+                if value is not None and value != "":
+                    return value
+        return default
+
+    @staticmethod
+    def team_name(value, fallback):
+        if isinstance(value, dict):
+            return value.get("name") or value.get("short_name") or fallback
+        return value or fallback
+
+    def fixtures(self, day):
         try:
-            r=self.session.get(BASE_URL+"/fixtures",params={"date":day,"timezone":"Europe/Istanbul"},timeout=25)
-        except requests.RequestException as e: raise ProviderError(f"API bağlantısı kurulamadı: {e}") from e
-        if r.status_code in (401,403): raise ProviderError("API anahtarı geçersiz veya erişim yetkisi yok.")
-        if r.status_code==429: raise ProviderError("API istek kotası doldu.")
-        if not r.ok: raise ProviderError(f"API HTTP {r.status_code}: {r.text[:250]}")
-        try: data=r.json()
-        except ValueError as e: raise ProviderError("Sağlayıcı geçerli JSON döndürmedi.") from e
-        if data.get("errors"): raise ProviderError(str(data["errors"])[:400])
-        out=[]
-        for x in data.get("response",[]):
-            f=x.get("fixture",{}); t=x.get("teams",{}); g=x.get("goals",{}); h=x.get("score",{}).get("halftime",{})
-            short=(f.get("status") or {}).get("short","NS")
-            state="finished" if short in ("FT","AET","PEN") else "live" if short in ("1H","HT","2H","ET","P","LIVE","INT") else "scheduled"
-            out.append({"id":f.get("id"),"home":(t.get("home") or {}).get("name") or "Ev sahibi","away":(t.get("away") or {}).get("name") or "Deplasman","league":(x.get("league") or {}).get("name",""),"kickoff":f.get("date",""),"status":state,"status_short":short,"home_goals":g.get("home"),"away_goals":g.get("away"),"ht_home":h.get("home"),"ht_away":h.get("away")})
-        return out
+            response = self.session.get(BASE_URL, params={"sport": "football", "date": day, "limit": 200}, timeout=25)
+        except requests.RequestException as exc:
+            raise ProviderError(f"SportScore bağlantı hatası: {exc}") from exc
+        if response.status_code == 429:
+            raise ProviderError("SportScore istek sınırı doldu. Biraz sonra tekrar deneyin.")
+        if response.status_code in (401, 403):
+            raise ProviderError("SportScore erişimi reddetti. API anahtarını kontrol edin.")
+        if not response.ok:
+            raise ProviderError(f"SportScore HTTP {response.status_code}: {response.text[:250]}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ProviderError("SportScore geçerli JSON döndürmedi.") from exc
+
+        rows = payload if isinstance(payload, list) else self.pick(payload, "fixtures", "matches", "results", "data", "response", default=[]) if isinstance(payload, dict) else []
+        if isinstance(rows, dict):
+            rows = self.pick(rows, "fixtures", "matches", "results", "data", default=[])
+        if not isinstance(rows, list):
+            raise ProviderError("SportScore yanıtında maç listesi bulunamadı.")
+
+        output = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            home = self.pick(item, "home", "home_team", "team_home", default={})
+            away = self.pick(item, "away", "away_team", "team_away", default={})
+            if isinstance(home, dict) and isinstance(home.get("team"), dict): home = home["team"]
+            if isinstance(away, dict) and isinstance(away.get("team"), dict): away = away["team"]
+            home_name = self.team_name(home, "Ev sahibi")
+            away_name = self.team_name(away, "Deplasman")
+            if home_name == "Ev sahibi" or away_name == "Deplasman": continue
+
+            league_obj = self.pick(item, "competition", "league", "tournament", default={})
+            league = self.team_name(league_obj, "") if isinstance(league_obj, dict) else str(league_obj or "")
+            country_obj = item.get("country") or (league_obj.get("country") if isinstance(league_obj, dict) else "")
+            country = self.team_name(country_obj, "") if isinstance(country_obj, dict) else str(country_obj or "")
+            if country and league: league = f"{country} · {league}"
+
+            kickoff = self.pick(item, "kickoff", "date", "start_time", "time", "datetime", default="")
+            if isinstance(kickoff, dict): kickoff = self.pick(kickoff, "utc", "datetime", "date", "timestamp", default="")
+            raw_status = str(self.pick(item, "status", "status_text", "state", default="upcoming")).lower()
+            code = str(self.pick(item, "status_short", "status_code", "period", default=""))
+            if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H","HT","2H","ET","P","LIVE","INT"):
+                state = "live"
+            elif any(s in raw_status for s in ("finished", "complete", "ended", "full_time")) or code in ("FT","AET","PEN"):
+                state = "finished"
+            else:
+                state = "scheduled"
+
+            score = item.get("score") if isinstance(item.get("score"), dict) else {}
+            hg = self.pick(item, "home_score", "home_goals", default=self.pick(score, "home", "home_score"))
+            ag = self.pick(item, "away_score", "away_goals", default=self.pick(score, "away", "away_score"))
+            ht = item.get("halftime") if isinstance(item.get("halftime"), dict) else item.get("half_time") if isinstance(item.get("half_time"), dict) else {}
+            output.append({
+                "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
+                "home": str(home_name), "away": str(away_name), "league": league,
+                "kickoff": str(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
+                "home_goals": hg, "away_goals": ag,
+                "ht_home": self.pick(item, "ht_home", "home_ht", default=self.pick(ht, "home", "home_score")),
+                "ht_away": self.pick(item, "ht_away", "away_ht", default=self.pick(ht, "away", "away_score"))
+            })
+        return output
