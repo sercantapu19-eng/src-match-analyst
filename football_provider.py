@@ -26,6 +26,69 @@ class FootballProvider:
         return default
 
     @staticmethod
+    def elapsed_minute(item):
+        """Read the match clock from SportScore fixture and widget payload variants."""
+        import re
+
+        def normalize(value):
+            if isinstance(value, dict):
+                minute = FootballProvider.pick(
+                    value, "elapsed", "elapsed_minute", "elapsed_minutes", "minute",
+                    "minutes", "value", "current", "timer", "clock"
+                )
+                extra = FootballProvider.pick(value, "extra", "added", "injury_time", "stoppage")
+                if minute is None:
+                    return None
+                base = normalize(minute)
+                if base is None:
+                    return None
+                return f"{base}+{extra}" if extra not in (None, "", 0, "0") else base
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return int(value) if float(value).is_integer() else value
+            if not isinstance(value, str):
+                return None
+            text = value.strip()
+            if not text:
+                return None
+            match = re.fullmatch(
+                r"(\d{1,3})(?:\s*\+\s*(\d{1,2}))?\s*(?:['′’]|m|min|mins|minute|minutes)?",
+                text, flags=re.IGNORECASE
+            )
+            if match:
+                return f"{match.group(1)}+{match.group(2)}" if match.group(2) else int(match.group(1))
+            clock = re.fullmatch(r"(\d{1,3}):(\d{2})", text)
+            if clock:
+                return int(clock.group(1))
+            return None
+
+        status = item.get("status") if isinstance(item.get("status"), dict) else {}
+        time_obj = item.get("time") if isinstance(item.get("time"), dict) else {}
+        timer_obj = item.get("timer") if isinstance(item.get("timer"), dict) else {}
+        candidates = [
+            item.get(key) for key in (
+                "elapsed", "elapsed_minute", "elapsed_minutes", "minute",
+                "match_minute", "elapsed_time", "timer", "clock", "time_elapsed"
+            )
+        ]
+        candidates.extend([
+            time_obj.get(key) for key in ("elapsed", "elapsed_minute", "elapsed_minutes", "minute", "timer", "clock")
+        ])
+        candidates.extend([
+            status.get(key) for key in ("elapsed", "elapsed_minute", "elapsed_minutes", "minute", "timer", "clock")
+        ])
+        candidates.extend([
+            timer_obj.get(key) for key in ("elapsed", "minute", "minutes", "value", "current")
+        ])
+        # SportScore can publish the match clock as status_text (e.g. "37'"
+        # or "45+2") while the primary status remains simply "live".
+        candidates.extend([item.get("status_text"), item.get("time_text"), item.get("minute_text")])
+        for candidate in candidates:
+            value = normalize(candidate)
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
     def team_name(value, fallback):
         if isinstance(value, dict):
             return value.get("name") or value.get("short_name") or fallback
@@ -111,14 +174,7 @@ class FootballProvider:
                           "half_time", "halftime", "extra_time", "penalty_shootout")
             finished_words = ("finished", "complete", "ended", "full_time", "fulltime",
                               "match_over", "after_extra_time", "after_penalties")
-            time_obj = item.get("time") if isinstance(item.get("time"), dict) else {}
-            elapsed_value = self.pick(item, "elapsed", "elapsed_minute", "minute", "match_minute", "elapsed_time",
-                                      default=self.pick(time_obj, "elapsed", "elapsed_minute", "minute", "match_minute",
-                                      default=self.pick(status_obj if isinstance(status_obj, dict) else {}, "elapsed", "elapsed_minute", "minute")))
-            if isinstance(elapsed_value, dict):
-                minute = self.pick(elapsed_value, "elapsed", "minute", "value", "current")
-                extra = self.pick(elapsed_value, "extra", "added", "injury_time")
-                elapsed_value = f"{minute}+{extra}" if minute is not None and extra not in (None, "", 0, "0") else minute
+            elapsed_value = self.elapsed_minute(item)
             if any(word in normalized_status for word in live_words) or code in live_codes:
                 state = "live"
             # SportScore sometimes sends compact status text (FT/AET/PEN)
@@ -290,7 +346,8 @@ class FootballProvider:
             else:
                 raw_status = str(self.pick(item, "status_text", "state", default=status_obj)).lower()
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
-            if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT"):
+            elapsed_value = self.elapsed_minute(item)
+            if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT") or elapsed_value is not None:
                 state = "live"
             elif raw_status.strip() in ("ft", "aet", "pen", "finished", "ended") or any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT", "AET", "PEN", "FINISHED", "ENDED", "FULL_TIME", "FULLTIME"):
                 state = "finished"
@@ -317,7 +374,7 @@ class FootballProvider:
                 "kickoff": self.local_kickoff(kickoff), "status": state,
                 "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),
-                "elapsed_minute": self.pick(item, "elapsed", "elapsed_minute", "minute", "match_minute", default=self.pick(item.get("time", {}) if isinstance(item.get("time"), dict) else {}, "elapsed", "minute")),
+                "elapsed_minute": elapsed_value,
                 "ht_home": score_int(ht_home), "ht_away": score_int(ht_away)
             })
         return output
