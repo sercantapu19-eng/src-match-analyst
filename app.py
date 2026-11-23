@@ -1,7 +1,8 @@
-import os, sqlite3
-from datetime import datetime, date
+import os, sqlite3, json, time
+from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash
 from football_provider import FootballProvider, ProviderError
+from prediction_engine import predict
 
 app=Flask(__name__); app.secret_key=os.environ.get("SECRET_KEY","change-this-before-deploy")
 DB_PATH=os.environ.get("DATABASE_PATH",os.path.join(os.path.dirname(__file__),"src_match_analyst.db"))
@@ -18,9 +19,9 @@ def init_db():
    odds_away TEXT DEFAULT '',htft TEXT DEFAULT '',over25 TEXT DEFAULT '',btts TEXT DEFAULT '',
    first_half_btts TEXT DEFAULT '',second_half_btts TEXT DEFAULT '',corners TEXT DEFAULT '',
    notes TEXT DEFAULT '',created_at TEXT NOT NULL,provider TEXT DEFAULT '',external_id TEXT DEFAULT '',
-   home_goals INTEGER,away_goals INTEGER,ht_home INTEGER,ht_away INTEGER,status_short TEXT DEFAULT '',elapsed_minute INTEGER)""")
+   home_goals INTEGER,away_goals INTEGER,ht_home INTEGER,ht_away INTEGER,status_short TEXT DEFAULT '',elapsed_minute INTEGER,prediction_confidence TEXT DEFAULT '{}',prediction_message TEXT DEFAULT '',analysis_notes TEXT DEFAULT '')""")
   cols={r[1] for r in c.execute("PRAGMA table_info(matches)").fetchall()}
-  for name,typ in [("provider","TEXT DEFAULT ''"),("external_id","TEXT DEFAULT ''"),("home_goals","INTEGER"),("away_goals","INTEGER"),("ht_home","INTEGER"),("ht_away","INTEGER"),("status_short","TEXT DEFAULT ''")]:
+  for name,typ in [("provider","TEXT DEFAULT ''"),("external_id","TEXT DEFAULT ''"),("home_goals","INTEGER"),("away_goals","INTEGER"),("ht_home","INTEGER"),("ht_away","INTEGER"),("status_short","TEXT DEFAULT ''"),("elapsed_minute","INTEGER"),("prediction_confidence","TEXT DEFAULT '{}'"),("prediction_message","TEXT DEFAULT ''"),("analysis_notes","TEXT DEFAULT ''")]:
    if name not in cols: c.execute(f"ALTER TABLE matches ADD COLUMN {name} {typ}")
   c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_fixture ON matches(provider,external_id) WHERE external_id <> ''")
   c.execute("""CREATE TABLE IF NOT EXISTS saved_matches(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL UNIQUE,saved_at TEXT NOT NULL,FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
@@ -32,6 +33,22 @@ def sync_prediction_rows(c,mid):
  for k,label in MARKETS:
   if m[k]:
    c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction",(mid,label,m[k]))
+
+
+def generate_prediction(c, mid):
+ m=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
+ if not m or m["status"] != "scheduled": return
+ history=c.execute("SELECT id,home,away,status,home_goals,away_goals,ht_home,ht_away FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff").fetchall()
+ data,message=predict(dict(m),[dict(x) for x in history])
+ if not data:
+  c.execute("UPDATE matches SET prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?",(message,mid))
+  return
+ for key,value in data["predictions"].items():
+  c.execute("UPDATE matches SET "+key+"=? WHERE id=?",(value,mid))
+  label=dict(MARKETS).get(key)
+  if label:
+   c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction",(mid,label,value))
+ c.execute("UPDATE matches SET prediction_confidence=?,prediction_message='',analysis_notes=? WHERE id=?",(json.dumps(data["confidence"],ensure_ascii=False),data["notes"],mid))
 
 def provider_ready():
  return True  # SportScore supports public access; API key is optional
@@ -60,7 +77,11 @@ def sync_fixtures():
  day=request.form.get("date") or date.today().isoformat()
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-  fixtures=provider.fixtures(day)
+  fixtures=[]
+  for offset in range(14,-1,-1):
+   target=(date.fromisoformat(day)-timedelta(days=offset)).isoformat()
+   fixtures.extend(provider.fixtures(target))
+   if offset: time.sleep(0.12)
   with db() as c:
    for f in fixtures:
     c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
@@ -73,7 +94,9 @@ def sync_fixtures():
       (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
        "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
    c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
-    ("sportscore",day,datetime.utcnow().isoformat(),len(fixtures),"success","SportScore fikstür senkronizasyonu tamamlandı"))
+    ("sportscore",day,datetime.utcnow().isoformat(),len(fixtures),"success",f"SportScore: {len(fixtures)} maç kaydı (15 günlük geçmiş dahil)"))
+   targets=c.execute("SELECT id FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchall()
+   for target in targets: generate_prediction(c,target["id"])
   flash(f"{len(fixtures)} maç otomatik olarak içe aktarıldı/güncellendi.","success")
  except ProviderError as e:
   with db() as c:c.execute("INSERT INTO sync_log(provider,day,ran_at,status,message) VALUES(?,?,?,?,?)",("sportscore",day,datetime.utcnow().isoformat(),"error",str(e)))
@@ -108,8 +131,9 @@ def detail(mid):
  with db() as c:
   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
   rs=c.execute("SELECT * FROM results WHERE match_id=? ORDER BY id",(mid,)).fetchall()
+  confidence=json.loads(m["prediction_confidence"] or "{}")
  if not m:return "Maç bulunamadı",404
- return render_template("detail.html",m=m,results=rs,markets=MARKETS)
+ return render_template("detail.html",m=m,results=rs,markets=MARKETS,confidence=confidence)
 @app.post("/match/<int:mid>/status")
 def status(mid):
  st=request.form.get("status","scheduled")
