@@ -46,5 +46,29 @@
 })();
 </script>
 <nav class="bulletin-tabs"><a class="{{'active' if view=='upcoming' else ''}}" href="/?date={{day}}&view=upcoming">Oynanmamış maçlar <span>{{upcoming_count}}</span></a><a class="{{'active' if view=='live' else ''}}" href="/?date={{day}}&view=live">Canlı maçlar <span>{{live_count}}</span></a><a class="{{'active' if view=='completed' else ''}}" href="/?date={{day}}&view=completed">Tamamlananlar</a></nav>
-{% if not matches %}<section class="empty"><h2>{% if view=='completed' %}Bu tarihte tamamlanan maç yok{% elif view=='live' %}Şu anda canlı maç bulunamadı{% else %}Oynanmamış maç bulunamadı{% endif %}</h2><p>SportScore üzerinden seçilen tarihin maçlarını otomatik getirebilirsin.</p></section>{% else %}<div class="table-wrap"><table><tr><th>Saat</th><th>Maç</th><th>Lig</th><th>Durum</th><th>Skor</th><th></th></tr>{% for m in matches %}<tr><td>{{m.kickoff[11:16] if m.kickoff and m.kickoff|length>15 else m.kickoff}}</td><td><b>{{m.home}} – {{m.away}}</b></td><td>{{m.league or "—"}}</td><td>{{"Tamamlandı" if m.status=="finished" else "Canlı" if m.status=="live" else "Başlamadı"}}</td><td>{% if m.home_goals is not none %}{{m.home_goals}} – {{m.away_goals}}{% else %}—{% endif %}</td><td><a href="/match/{{m.id}}">Detay →</a></td></tr>{% endfor %}</table></div>{% endif %}
+{% if not matches %}<section class="empty"><h2>{% if view=='completed' %}Bu tarihte tamamlanan maç yok{% elif view=='live' %}Şu anda canlı maç bulunamadı{% else %}Oynanmamış maç bulunamadı{% endif %}</h2><p>SportScore üzerinden seçilen tarihin maçlarını otomatik getirebilirsin.</p></section>{% else %}<div class="table-wrap"><table><tr><th>Saat</th><th>Maç</th><th>Lig</th><th>Durum</th><th>Skor</th><th></th></tr>{% for m in matches %}<tr data-match-id="{{m.id}}"><td>{{m.kickoff[11:16] if m.kickoff and m.kickoff|length>15 else m.kickoff}}</td><td><b>{{m.home}} – {{m.away}}</b></td><td>{{m.league or "—"}}</td><td data-status-cell>{% if m.status=="finished" %}Tamamlandı{% elif m.status=="live" %}{% if m.status_short in ("HT","INT","BREAK","BT") %}Devre Arası{% elif m.elapsed_minute is not none and m.elapsed_minute|string|length %}Canlı {{m.elapsed_minute}}′{% elif m.status_short in ("1H","1ST_HALF") %}Canlı · 1. Yarı{% elif m.status_short in ("2H","2ND_HALF") %}Canlı · 2. Yarı{% else %}Canlı{% endif %}{% else %}Başlamadı{% endif %}</td><td data-score-cell>{% if m.home_goals is not none %}{{m.home_goals}} – {{m.away_goals}}{% else %}—{% endif %}</td><td><a href="/match/{{m.id}}">Detay →</a></td></tr>{% endfor %}</table></div>{% endif %}
+{% if view == "live" %}
+<script>
+(() => {
+ const day={{day|tojson}};
+ async function refreshLiveMinutes(){
+  try{
+   const response=await fetch("/sync/live/refresh?date="+encodeURIComponent(day),{cache:"no-store"});
+   if(!response.ok)return;
+   const payload=await response.json();
+   for(const match of (payload.matches||[])){
+    const row=document.querySelector('[data-match-id="'+match.id+'"]');
+    if(!row)continue;
+    const status=row.querySelector("[data-status-cell]");
+    const score=row.querySelector("[data-score-cell]");
+    if(status)status.textContent=match.minute_label||"Canlı";
+    if(score)score.textContent=match.score||"—";
+   }
+  }catch(_error){/* Keep the last displayed live score and minute on transient errors. */}
+ }
+ refreshLiveMinutes();
+ window.setInterval(refreshLiveMinutes,30000);
+})();
+</script>
+{% endif %}
 {% endblock %}
