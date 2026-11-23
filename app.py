@@ -78,7 +78,7 @@ def sync_fixtures():
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
   fixtures=[]
-  for offset in range(14,-1,-1):
+  for offset in range(30,-1,-1):
    target=(date.fromisoformat(day)-timedelta(days=offset)).isoformat()
    fixtures.extend(provider.fixtures(target))
    if offset: time.sleep(0.12)
@@ -94,7 +94,7 @@ def sync_fixtures():
       (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
        "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
    c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
-    ("sportscore",day,datetime.utcnow().isoformat(),len(fixtures),"success",f"SportScore: {len(fixtures)} maç kaydı (15 günlük geçmiş dahil)"))
+    ("sportscore",day,datetime.utcnow().isoformat(),len(fixtures),"success",f"SportScore: {len(fixtures)} maç kaydı (31 günlük geçmiş dahil)"))
    targets=c.execute("SELECT id FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchall()
    for target in targets: generate_prediction(c,target["id"])
   flash(f"{len(fixtures)} maç otomatik olarak içe aktarıldı/güncellendi.","success")
