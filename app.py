@@ -46,6 +46,63 @@ def db():
   return PostgresConnection(database_url)
  c=sqlite3.connect(DB_PATH); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
 
+
+def migrate_legacy_sqlite_to_postgres():
+ legacy_path=DB_PATH
+ if not legacy_path or not os.path.isfile(legacy_path):
+  app.logger.warning("Neon is enabled, but no legacy SQLite file was found at DATABASE_PATH; legacy records were not migrated.")
+  return {"status":"legacy_file_not_found","rows":{}}
+ source=sqlite3.connect(f"file:{legacy_path}?mode=ro",uri=True)
+ source.row_factory=sqlite3.Row
+ try:
+  source_tables={row[0] for row in source.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+  if "matches" not in source_tables:
+   app.logger.warning("Legacy SQLite file has no matches table; no legacy data was migrated.")
+   return {"status":"legacy_schema_not_found","rows":{}}
+  with db() as target:
+   target.execute("""CREATE TABLE IF NOT EXISTS data_migrations(
+    migration_key TEXT PRIMARY KEY,completed_at TEXT NOT NULL,details TEXT DEFAULT '{}')""")
+   done=target.execute("SELECT 1 FROM data_migrations WHERE migration_key=?",("sqlite_to_neon_v1",)).fetchone()
+   if done:
+    return {"status":"already_migrated","rows":{}}
+   counts={}
+   for table in ("matches","saved_matches","results","sync_log","sync_jobs"):
+    if table not in source_tables:
+     continue
+    source_columns=[row[1] for row in source.execute(f"PRAGMA table_info({table})").fetchall()]
+    target_columns=[row["column_name"] for row in target.execute(
+     "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=? ORDER BY ordinal_position",
+     (table,)).fetchall()]
+    columns=[name for name in source_columns if name in target_columns]
+    if not columns:
+     continue
+    quoted=",".join('"'+name.replace('"','""')+'"' for name in columns)
+    placeholders=",".join(["%s"]*len(columns))
+    insert=f"INSERT INTO {table}({quoted}) VALUES({placeholders}) ON CONFLICT DO NOTHING"
+    cursor=source.execute(f"SELECT {quoted} FROM {table}")
+    copied=0
+    while True:
+     batch=cursor.fetchmany(500)
+     if not batch:
+      break
+     for record in batch:
+      target.execute(insert,tuple(record[name] for name in columns))
+      copied+=1
+    counts[table]=copied
+    if "id" in columns:
+     target.execute(
+      f"SELECT setval(pg_get_serial_sequence('{table}','id'), GREATEST(COALESCE(MAX(id),1),1), COUNT(*)>0) FROM {table}"
+     )
+   target.execute(
+    "INSERT INTO data_migrations(migration_key,completed_at,details) VALUES(?,?,?) ON CONFLICT(migration_key) DO NOTHING",
+    ("sqlite_to_neon_v1",datetime.utcnow().isoformat(),json.dumps(counts,ensure_ascii=False))
+   )
+  app.logger.info("Legacy SQLite import to Neon completed: %s",counts)
+  return {"status":"completed","rows":counts}
+ finally:
+  source.close()
+
+
 def init_db():
  if os.environ.get("DATABASE_URL","").strip():
   with db() as c:
@@ -77,6 +134,9 @@ def init_db():
     created_at TEXT NOT NULL,updated_at TEXT NOT NULL,team_names TEXT DEFAULT '[]',team_index INTEGER DEFAULT 0)""")
    c.execute("ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS team_names TEXT DEFAULT '[]'")
    c.execute("ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS team_index INTEGER DEFAULT 0")
+  migration=migrate_legacy_sqlite_to_postgres()
+  if migration["status"] == "legacy_file_not_found":
+   app.logger.warning("Legacy data transfer requires a reachable SQLite file or a separate export.")
   return
  with db() as c:
   c.execute("""CREATE TABLE IF NOT EXISTS matches(
