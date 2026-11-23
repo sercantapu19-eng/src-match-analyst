@@ -13,6 +13,7 @@ class BulletinFixtureFilteringTests(unittest.TestCase):
         self.old_db_path = application.DB_PATH
         application.DB_PATH = os.path.join(self.tempdir.name, "bulletin.db")
         application.init_db()
+        application.init_auth_db()
         self.client = application.app.test_client()
         self.day = datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
         self.now = datetime.now(ZoneInfo("Europe/Istanbul"))
