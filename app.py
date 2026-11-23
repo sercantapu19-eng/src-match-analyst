@@ -384,76 +384,88 @@ def history_sync_status():
 def history_sync_step():
  payload=request.get_json(silent=True) or {}
  job_id=payload.get("job_id")
+ # Read only the job state, then close the database connection BEFORE any
+ # potentially slow SportScore network request.
  with db() as c:
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone()
   if not job:return jsonify({"status":"error","last_error":"Senkronizasyon işi bulunamadı."}),404
   if job["status"]!="running":return jsonify(history_job_payload(job))
   phase=job["phase"]
+  day=job["cursor_date"] if phase=="history" else None
+  team_names=json.loads(job["team_names"] or "[]") if phase=="team_history" else []
+  team_index=job["team_index"] if phase=="team_history" else 0
+  team_name=team_names[team_index] if phase=="team_history" and team_index<len(team_names) else None
+
+ # External calls happen with NO open PostgreSQL transaction/connection.
+ fixtures=None
+ fetch_error=None
+ if phase=="history":
+  try:
+   fixtures=FootballProvider(os.environ.get("SPORTSCORE_API_KEY")).fixtures(day,status="finished")
+  except Exception as exc:
+   fetch_error=exc
+ elif phase=="team_history" and team_name:
+  try:
+   fixtures=FootballProvider(os.environ.get("SPORTSCORE_API_KEY")).team_fixtures_for_team(team_name,limit=30)
+  except Exception as exc:
+   fetch_error=exc
+
+ with db() as c:
+  job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone()
+  if not job:return jsonify({"status":"error","last_error":"Senkronizasyon işi bulunamadı."}),404
+  if job["status"]!="running":return jsonify(history_job_payload(job))
+  # Do not apply a response if another step has already advanced this job.
+  if job["phase"]!=phase or (phase=="history" and job["cursor_date"]!=day) or (phase=="team_history" and job["team_index"]!=team_index):
+   return jsonify(history_job_payload(job))
+
   if phase=="history":
-   day=job["cursor_date"]
-   try:
-    provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-    fixtures=provider.fixtures(day,status="finished")
-    stats=store_fixtures(c,fixtures)
+   if fetch_error is not None:
+    attempts=job["attempts"]+1
+    state="error" if attempts>=3 else "running"
+    c.execute("UPDATE sync_jobs SET attempts=?,last_error=?,status=?,updated_at=? WHERE id=?",
+     (attempts,str(fetch_error),state,datetime.utcnow().isoformat(),job_id))
+   else:
+    stats=store_fixtures(c,fixtures or [])
     next_day=(date.fromisoformat(day)+timedelta(days=1)).isoformat()
     processed=job["processed_days"]+1
-    team_names=json.loads(job["team_names"] or "[]")
+    names=json.loads(job["team_names"] or "[]")
     if next_day>job["end_date"]:
      rows=c.execute("SELECT home,away FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now') ORDER BY kickoff").fetchall()
-     seen=set()
+     seen={" ".join(str(n or "").casefold().split()) for n in names}
      for row in rows:
       for name in (row["home"],row["away"]):
        key=" ".join(str(name or "").casefold().split())
        if key and key not in seen:
-        seen.add(key); team_names.append(str(name))
-     next_phase="team_history" if team_names else "predictions"
-     pred_total=0
-     final_status="running"
+        seen.add(key); names.append(str(name))
+     next_phase="team_history" if names else "predictions"
     else:
-     pred_total=job["predictions_total"]; next_phase="history"; final_status="running"
-    c.execute("""UPDATE sync_jobs SET phase=?,status=?,cursor_date=?,processed_days=?,team_names=?,team_index=0,fixtures_count=fixtures_count+?,
-      fetched_count=fetched_count+?,skipped_count=skipped_count+?,predictions_total=?,attempts=0,last_error='',updated_at=? WHERE id=?""",
-      (next_phase,final_status,next_day,processed,json.dumps(team_names,ensure_ascii=False),stats["stored"],stats["fetched"],stats["skipped"],pred_total,datetime.utcnow().isoformat(),job_id))
-    if final_status=="completed":
-     c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
-      ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"]+len(fixtures),"success","180 günlük geçmiş maç verisi tamamlandı"))
-   except Exception as exc:
-    attempts=job["attempts"]+1
-    state="error" if attempts>=3 else "running"
-    c.execute("UPDATE sync_jobs SET attempts=?,last_error=?,status=?,updated_at=? WHERE id=?",
-     (attempts,str(exc),state,datetime.utcnow().isoformat(),job_id))
+     next_phase="history"
+    c.execute("""UPDATE sync_jobs SET phase=?,status='running',cursor_date=?,processed_days=?,team_names=?,team_index=0,
+      fixtures_count=fixtures_count+?,fetched_count=fetched_count+?,skipped_count=skipped_count+?,
+      attempts=0,last_error='',updated_at=? WHERE id=?""",
+     (next_phase,next_day,processed,json.dumps(names,ensure_ascii=False),stats["stored"],stats["fetched"],stats["skipped"],datetime.utcnow().isoformat(),job_id))
+
   elif phase=="team_history":
-   team_names=json.loads(job["team_names"] or "[]")
-   index=job["team_index"]
-   if index < len(team_names):
-    team_name=team_names[index]
-    try:
-     provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-     team_fixtures=provider.team_fixtures_for_team(team_name,limit=30)
-     stats=store_fixtures(c,team_fixtures)
-     team_skipped=stats["skipped"] + (1 if not team_fixtures else 0)
-     error_note=""
-    except Exception as exc:
-     stats={"fetched":0,"stored":0}
-     team_skipped=1
-     error_note=f"{team_name}: {exc}"
-    next_index=index+1
+   if not team_name:
+    c.execute("UPDATE sync_jobs SET phase='predictions',updated_at=? WHERE id=?",(datetime.utcnow().isoformat(),job_id))
+   else:
+    stats=store_fixtures(c,fixtures or []) if fetch_error is None else {"fetched":0,"stored":0,"skipped":0}
+    next_index=team_index+1
     is_last=next_index>=len(team_names)
-    if is_last:
-     pred_total=c.execute("SELECT COUNT(*) FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')").fetchone()[0]
-     next_phase="predictions" if pred_total else "completed"
-    else:
-     pred_total=job["predictions_total"]
-     next_phase="team_history"
+    pred_total=c.execute("SELECT COUNT(*) FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')").fetchone()[0] if is_last else job["predictions_total"]
+    next_phase=("predictions" if pred_total else "completed") if is_last else "team_history"
+    skipped=stats["skipped"]+(1 if fetch_error is not None or not fixtures else 0)
+    note=f"{team_name}: {fetch_error}" if fetch_error is not None else ""
     c.execute("""UPDATE sync_jobs SET phase=?,status=?,team_index=?,fixtures_count=fixtures_count+?,
       fetched_count=fetched_count+?,skipped_count=skipped_count+?,predictions_total=?,
       last_error=?,updated_at=? WHERE id=?""",
-      (next_phase,"running" if next_phase!="completed" else "completed",next_index,
-       stats["stored"],stats["fetched"],team_skipped,pred_total,error_note,datetime.utcnow().isoformat(),job_id))
+     (next_phase,"running" if next_phase!="completed" else "completed",next_index,stats["stored"],stats["fetched"],skipped,
+      pred_total,note,datetime.utcnow().isoformat(),job_id))
     if next_phase=="completed":
      c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
       ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"]+stats["stored"],"success",
        f"Geçmiş veri tamamlandı; {job['fetched_count']+stats['fetched']} kayıt alındı, takım geçmişi dahil {job['fixtures_count']+stats['stored']} tamamlanmış maç kaydedildi."))
+
   elif phase=="predictions":
    history=[dict(x) for x in c.execute("""SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away
     FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff""").fetchall()]
