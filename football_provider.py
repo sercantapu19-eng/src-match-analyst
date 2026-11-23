@@ -104,7 +104,10 @@ class FootballProvider:
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
             if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H","HT","2H","ET","P","LIVE","INT"):
                 state = "live"
-            elif any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT","AET","PEN","FINISHED","ENDED","FULL_TIME","FULLTIME"):
+            # SportScore sometimes sends compact status text (FT/AET/PEN)
+            # without a separate status code. Do not discard these completed
+            # historical fixtures as scheduled matches.
+            elif raw_status.strip() in ("ft", "aet", "pen", "finished", "ended") or any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT","AET","PEN","FINISHED","ENDED","FULL_TIME","FULLTIME"):
                 state = "finished"
             else:
                 state = "scheduled"

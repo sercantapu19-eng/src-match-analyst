@@ -64,6 +64,33 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(rows[1]["ht_home"], 1)
         self.assertEqual(rows[1]["ht_away"], 1)
 
+    def test_compact_finished_status_codes_are_not_discarded(self):
+        provider = FootballProvider()
+        class CompactStatusResponse:
+            status_code = 200
+            ok = True
+            text = ""
+            def json(self):
+                return {"fixtures": [
+                    {"id": 201, "home": "Brentford", "away": "Everton",
+                     "competition": "English Premier League", "date": "2026-11-20T12:00:00Z",
+                     "status": "FT", "home_score": 2, "away_score": 1},
+                    {"id": 202, "home": "Brentford", "away": "Everton",
+                     "competition": "English Premier League", "date": "2026-11-21T12:00:00Z",
+                     "status": "AET", "home_score": 1, "away_score": 0},
+                    {"id": 203, "home": "Brentford", "away": "Everton",
+                     "competition": "English Premier League", "date": "2026-11-22T12:00:00Z",
+                     "status": "PEN", "home_score": 1, "away_score": 1}
+                ]}
+        class CompactStatusSession:
+            def get(self, url, params, timeout):
+                return CompactStatusResponse()
+        provider.session = CompactStatusSession()
+        rows = provider.fixtures("2026-11-20", status="finished")
+        self.assertEqual([row["status"] for row in rows], ["finished", "finished", "finished"])
+        self.assertEqual([row["home_goals"] for row in rows], [2, 1, 1])
+        self.assertEqual([row["away_goals"] for row in rows], [1, 0, 1])
+
     def test_team_schedule_payload_parses_widget_match_shape(self):
         provider = FootballProvider()
         rows = provider.parse_fixtures_payload({
