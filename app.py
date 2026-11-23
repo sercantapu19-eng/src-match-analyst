@@ -225,21 +225,50 @@ def generate_prediction(c, mid):
 def provider_ready():
  return True  # SportScore supports public access; API key is optional
 
+def upsert_fixture_record(c, fixture, provider="sportscore"):
+ # Some feed variants omit a stable fixture ID. Fall back to a deterministic
+ # identity so repeated syncs update the existing row instead of inserting it.
+ external_id=str(fixture.get("id") or "").strip()
+ provider_name=str(fixture.get("provider") or provider)
+ if not external_id:
+  existing=c.execute("""SELECT id FROM matches
+   WHERE provider=? AND COALESCE(external_id,'')=''
+    AND lower(trim(home))=lower(trim(?))
+    AND lower(trim(away))=lower(trim(?))
+    AND lower(trim(COALESCE(league,'')))=lower(trim(?))
+    AND kickoff=?
+   ORDER BY id LIMIT 1""",
+   (provider_name,fixture["home"],fixture["away"],fixture.get("league",""),fixture.get("kickoff",""))).fetchone()
+  if existing:
+   c.execute("""UPDATE matches SET league=?,status=?,home_goals=?,away_goals=?,ht_home=?,ht_away=?,
+    status_short=?,elapsed_minute=? WHERE id=?""",
+    (fixture.get("league",""),fixture["status"],fixture.get("home_goals"),fixture.get("away_goals"),
+     fixture.get("ht_home"),fixture.get("ht_away"),fixture.get("status_short",""),
+     fixture.get("elapsed_minute"),existing["id"]))
+   return existing["id"]
+ cur=c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
+  home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
+  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
+  home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
+  status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
+  ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,
+  elapsed_minute=excluded.elapsed_minute RETURNING id""",
+  (fixture["home"],fixture["away"],fixture.get("league",""),fixture.get("kickoff",""),
+   fixture["status"],datetime.utcnow().isoformat(),provider_name,external_id,
+   fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),
+   fixture.get("ht_away"),fixture.get("status_short",""),fixture.get("elapsed_minute")))
+ row=cur.fetchone()
+ return row["id"] if row else None
+
+
 def store_fixtures(c, fixtures):
  stored=0
  for f in fixtures:
   # Historical sync must only persist completed matches with a real full-time score.
   if f["status"] != "finished" or f["home_goals"] is None or f["away_goals"] is None:
    continue
-  c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
-    home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
-    home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
-    status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
-    ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,elapsed_minute=excluded.elapsed_minute""",
-    (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
-     "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
+  upsert_fixture_record(c,f)
   stored+=1
  return {"fetched":len(fixtures),"stored":stored,"skipped":len(fixtures)-stored}
 
@@ -337,15 +366,7 @@ def sync_fixtures():
   fixtures=provider.fixtures(day)
   with db() as c:
    for f in fixtures:
-    c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
-      home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
-      home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
-      status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
-      ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,elapsed_minute=excluded.elapsed_minute""",
-      (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
-       "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
+    upsert_fixture_record(c,f)
    # Read finished-match history once and reuse it for all predictions.
    history=[dict(x) for x in c.execute(
     "SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff"
