@@ -114,13 +114,19 @@ class FootballProvider:
             hg = self.pick(item, "home_score", "home_goals", default=self.pick(score, "home", "home_score", default=self.pick(full, "home", "home_score", default=self.pick(scores, "home", "home_score"))))
             ag = self.pick(item, "away_score", "away_goals", default=self.pick(score, "away", "away_score", default=self.pick(full, "away", "away_score", default=self.pick(scores, "away", "away_score"))))
             ht = item.get("halftime") if isinstance(item.get("halftime"), dict) else item.get("half_time") if isinstance(item.get("half_time"), dict) else scores.get("halftime", {}) if isinstance(scores.get("halftime"), dict) else score.get("halftime", {}) if isinstance(score.get("halftime"), dict) else score.get("half_time", {}) if isinstance(score.get("half_time"), dict) else {}
+            ht_home = self.pick(item, "ht_home", "home_ht", default=self.pick(ht, "home", "home_score"))
+            ht_away = self.pick(item, "ht_away", "away_ht", default=self.pick(ht, "away", "away_score"))
+            def score_int(value):
+                try:
+                    return int(value) if value is not None and str(value).strip() != "" else None
+                except (TypeError, ValueError):
+                    return None
             output.append({
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "kickoff": self.local_kickoff(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
-                "home_goals": hg, "away_goals": ag,
+                "home_goals": score_int(hg), "away_goals": score_int(ag),
                 "elapsed_minute": self.pick(item, "elapsed", "elapsed_minute", "minute", "match_minute", default=self.pick(item.get("time", {}) if isinstance(item.get("time"), dict) else {}, "elapsed", "minute")),
-                "ht_home": self.pick(item, "ht_home", "home_ht", default=self.pick(ht, "home", "home_score")),
-                "ht_away": self.pick(item, "ht_away", "away_ht", default=self.pick(ht, "away", "away_score"))
+                "ht_home": score_int(ht_home), "ht_away": score_int(ht_away)
             })
         return output
