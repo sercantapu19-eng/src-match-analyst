@@ -89,8 +89,7 @@ class HistorySyncRouteTests(unittest.TestCase):
         class FakeProvider:
             def __init__(self, *args, **kwargs):
                 pass
-            def fixtures(self, day, status=None):
-                self_day = day
+            def live_matches(self, limit=50):
                 return [{
                     "id": "live-1", "home": "Home FC", "away": "Away FC",
                     "league": "Test League", "kickoff": "2026-11-23T12:00:00+03:00",
