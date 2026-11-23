@@ -83,7 +83,7 @@ class HistorySyncRouteTests(unittest.TestCase):
 
     def test_second_start_reuses_active_job(self):
         first = self.client.post("/sync/history/start", headers={"X-CSRF-Token": "test-csrf-token"}).get_json()
-        second = self.client.post("/sync/history/start").get_json()
+        second = self.client.post("/sync/history/start", headers={"X-CSRF-Token": "test-csrf-token"}).get_json()
         self.assertEqual(first["job_id"], second["job_id"])
 
     def test_live_refresh_updates_minute_and_score(self):
