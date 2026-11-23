@@ -11,7 +11,7 @@ class HistorySyncRouteTests(unittest.TestCase):
         application.DB_PATH = os.path.join(self.tempdir.name, "test.db")
         application.init_db()
         self.client = application.app.test_client()
-        self.old_admin_emails = os.environ.get("ADMIN_EMAILS")
+        self.old_admin_ids = os.environ.get("ADMIN_USER_IDS")
         os.environ["ADMIN_EMAILS"] = "admin@example.com"
         with self.client.session_transaction() as session:
             session["user_id"] = 1
