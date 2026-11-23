@@ -76,7 +76,7 @@ class HistorySyncRouteTests(unittest.TestCase):
         self.assertEqual(tuple(imported), (2, 1))
 
     def test_status_endpoint_restores_last_job(self):
-        started = self.client.post("/sync/history/start").get_json()
+        started = self.client.post("/sync/history/start", headers={"X-CSRF-Token": "test-csrf-token"}).get_json()
         restored = self.client.get("/sync/history/status").get_json()
         self.assertEqual(restored["job_id"], started["job_id"])
         self.assertEqual(restored["phase"], "history")
