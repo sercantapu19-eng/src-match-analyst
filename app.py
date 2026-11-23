@@ -411,10 +411,9 @@ def history_sync_step():
   try:
    # Fetch up to three adjacent days concurrently. This cuts the number of
    # browser round-trips while keeping provider load modest and bounded.
-   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
    history_fixtures={}
    with ThreadPoolExecutor(max_workers=3) as pool:
-    futures={pool.submit(provider.fixtures, target_day, status="finished"):target_day for target_day in history_days}
+    futures={pool.submit(FootballProvider(os.environ.get("SPORTSCORE_API_KEY")).fixtures, target_day, status="finished"):target_day for target_day in history_days}
     for future in as_completed(futures):
      target_day=futures[future]
      history_fixtures[target_day]=future.result()
