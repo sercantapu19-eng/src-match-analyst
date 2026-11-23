@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feature/global-history-sync
+      - fix/history-import-status-parsing
 jobs:
   python-check:
     runs-on: ubuntu-latest

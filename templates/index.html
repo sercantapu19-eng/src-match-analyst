@@ -14,9 +14,9 @@
  if(!button||!status||!bar)return;
  const show=(job)=>{
   bar.value=job.percent||0;
-  if(job.status==="completed"){status.textContent="Tamamlandı · "+job.fixtures_count+" geçmiş maç tarandı · "+job.predictions_processed+" yaklaşan maçın tahmini yenilendi.";button.disabled=false;button.textContent="Geçmiş verileri yeniden güncelle";return;}
+  if(job.status==="completed"){status.textContent="Tamamlandı · "+job.fetched_count+" kayıt alındı · "+job.fixtures_count+" tamamlanmış maç kaydedildi · "+job.skipped_count+" kayıt atlandı · "+job.predictions_processed+" yaklaşan maç işlendi.";button.disabled=false;button.textContent="Geçmiş verileri yeniden güncelle";return;}
   if(job.status==="error"){status.textContent="İşlem durdu: "+(job.last_error||"Bilinmeyen hata")+" · Yeniden deneyebilirsin.";button.disabled=false;button.textContent="Yeniden dene";return;}
-  const detail=job.phase==="history"?(job.processed_days+"/"+job.total_days+" gün · "+job.fixtures_count+" maç"):(job.predictions_processed+"/"+job.predictions_total+" maç tahmini");
+  const detail=job.phase==="history"?(job.processed_days+"/"+job.total_days+" gün · "+job.fetched_count+" kayıt alındı · "+job.fixtures_count+" tamamlanmış maç kaydedildi"):(job.predictions_processed+"/"+job.predictions_total+" maç tahmini");
   status.textContent="Çalışıyor · "+detail+" · "+job.percent+"%";
  };
  async function run(){

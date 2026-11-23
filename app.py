@@ -27,7 +27,10 @@ def init_db():
   c.execute("""CREATE TABLE IF NOT EXISTS saved_matches(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL UNIQUE,saved_at TEXT NOT NULL,FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
   c.execute("""CREATE TABLE IF NOT EXISTS results(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL,market TEXT NOT NULL,prediction TEXT NOT NULL,actual TEXT DEFAULT '',outcome TEXT DEFAULT 'pending',FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,UNIQUE(match_id,market))""")
   c.execute("""CREATE TABLE IF NOT EXISTS sync_log(id INTEGER PRIMARY KEY AUTOINCREMENT,provider TEXT,day TEXT,ran_at TEXT,fixtures_count INTEGER DEFAULT 0,status TEXT,message TEXT)""")
-  c.execute("""CREATE TABLE IF NOT EXISTS sync_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT,phase TEXT NOT NULL,status TEXT NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,cursor_date TEXT NOT NULL,total_days INTEGER NOT NULL,processed_days INTEGER DEFAULT 0,fixtures_count INTEGER DEFAULT 0,predictions_total INTEGER DEFAULT 0,predictions_processed INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,last_error TEXT DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)""")
+  c.execute("""CREATE TABLE IF NOT EXISTS sync_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT,phase TEXT NOT NULL,status TEXT NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,cursor_date TEXT NOT NULL,total_days INTEGER NOT NULL,processed_days INTEGER DEFAULT 0,fixtures_count INTEGER DEFAULT 0,predictions_total INTEGER DEFAULT 0,predictions_processed INTEGER DEFAULT 0,fetched_count INTEGER DEFAULT 0,skipped_count INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,last_error TEXT DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)""")
+  job_cols={r[1] for r in c.execute("PRAGMA table_info(sync_jobs)").fetchall()}
+  for name,typ in [("fetched_count","INTEGER DEFAULT 0"),("skipped_count","INTEGER DEFAULT 0")]:
+   if name not in job_cols: c.execute(f"ALTER TABLE sync_jobs ADD COLUMN {name} {typ}")
 
 def sync_prediction_rows(c,mid):
  m=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
@@ -55,8 +58,10 @@ def provider_ready():
  return True  # SportScore supports public access; API key is optional
 
 def store_fixtures(c, fixtures):
+ stored=0
  for f in fixtures:
-  if f["status"] == "finished" and (f["home_goals"] is None or f["away_goals"] is None):
+  # Historical sync must only persist completed matches with a real full-time score.
+  if f["status"] != "finished" or f["home_goals"] is None or f["away_goals"] is None:
    continue
   c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
     home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
@@ -67,6 +72,8 @@ def store_fixtures(c, fixtures):
     ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,elapsed_minute=excluded.elapsed_minute""",
     (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
      "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
+  stored+=1
+ return {"fetched":len(fixtures),"stored":stored,"skipped":len(fixtures)-stored}
 
 def rebuild_one_prediction(c, target, history):
  try:
@@ -95,7 +102,7 @@ def history_job_payload(job):
  return {"job_id":job["id"],"status":job["status"],"phase":job["phase"],
   "processed_days":job["processed_days"],"total_days":job["total_days"],
   "predictions_processed":job["predictions_processed"],"predictions_total":job["predictions_total"],
-  "fixtures_count":job["fixtures_count"],"percent":percent,"last_error":job["last_error"]}
+  "fixtures_count":job["fixtures_count"],"fetched_count":job["fetched_count"],"skipped_count":job["skipped_count"],"percent":percent,"last_error":job["last_error"]}
 
 
 init_db()
@@ -208,7 +215,7 @@ def history_sync_step():
    try:
     provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
     fixtures=provider.fixtures(day,status="finished")
-    store_fixtures(c,fixtures)
+    stats=store_fixtures(c,fixtures)
     next_day=(date.fromisoformat(day)+timedelta(days=1)).isoformat()
     processed=job["processed_days"]+1
     if next_day>job["end_date"]:
@@ -218,8 +225,8 @@ def history_sync_step():
     else:
      pred_total=job["predictions_total"]; next_phase="history"; final_status="running"
     c.execute("""UPDATE sync_jobs SET phase=?,status=?,cursor_date=?,processed_days=?,fixtures_count=fixtures_count+?,
-      predictions_total=?,attempts=0,last_error='',updated_at=? WHERE id=?""",
-      (next_phase,final_status,next_day,processed,len(fixtures),pred_total,datetime.utcnow().isoformat(),job_id))
+      fetched_count=fetched_count+?,skipped_count=skipped_count+?,predictions_total=?,attempts=0,last_error='',updated_at=? WHERE id=?""",
+      (next_phase,final_status,next_day,processed,stats["stored"],stats["fetched"],stats["skipped"],pred_total,datetime.utcnow().isoformat(),job_id))
     if final_status=="completed":
      c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
       ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"]+len(fixtures),"success","180 günlük geçmiş maç verisi tamamlandı"))
@@ -241,7 +248,7 @@ def history_sync_step():
    if done:
     c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
      ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"],"success",
-      f"Geçmiş veri tamamlandı; {job['fixtures_count']} maç tarandı, {processed} yaklaşan maç yeniden tahmin edildi."))
+      f"Geçmiş veri tamamlandı; {job['fetched_count']} kayıt alındı, {job['fixtures_count']} tamamlanmış maç kaydedildi, {job['skipped_count']} kayıt atlandı; {processed} yaklaşan maç yeniden tahmin edildi."))
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone()
  return jsonify(history_job_payload(job))
 

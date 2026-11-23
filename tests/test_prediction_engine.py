@@ -17,7 +17,7 @@ class PredictionEngineTests(unittest.TestCase):
             })
 
         match = {
-            "id": "future-1", "home": "Home FC", "away": "Away FC",
+            "id": "future-1", "home": "Home", "away": "Away",
             "league": "Test League", "status": "scheduled"
         }
         data, message = predict(match, history)
