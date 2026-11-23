@@ -26,7 +26,7 @@ Connect this repository to Render, choose New > Blueprint, and use render.yaml. 
 
 ## V1 limitations
 - No automatic fixture, bookmaker odds, lineup, injury or suspension feeds yet; enter matches manually.
-- No user authentication. Add authentication and user-specific authorization before allowing multiple users.
+- Account registration/login and per-user saved selections are implemented; see the multi-user security notes below.
 - Result comparison uses exact text-label matching and is not an official bookmaker settlement engine.
 
 ## Next stage
@@ -41,4 +41,6 @@ Integrate a licensed football data provider, timestamped odds sources, team news
 - Set Render environment variable `ADMIN_EMAILS` to a comma-separated list of administrator email addresses before using administrative controls. If it is unset, admin-only operations are denied.
 - Set a long random `SECRET_KEY`; do not use the development fallback in production.
 - Session cookies are HttpOnly and SameSite=Lax; Secure is enabled on Render/production.
-- This is an initial account foundation, not a complete public launch security review. Add CSRF protection, registration/login rate limiting, email verification, password reset, privacy/terms pages, and abuse monitoring before promoting the site publicly.
+- CSRF validation is enforced for unsafe requests, and failed login attempts are throttled to 10 per 15 minutes per email or IP using database-backed counters.
+- Production startup requires a configured SECRET_KEY of at least 32 characters.
+- This remains an initial account foundation, not a complete public launch security review. Add email verification, password reset, privacy/terms pages, abuse monitoring, PostgreSQL concurrency tests, and review proxy-aware rate limiting/live-refresh caching before promoting the site publicly.
