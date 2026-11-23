@@ -54,7 +54,7 @@ def translate_postgres_sql(query):
  if re.search(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", sql, flags=re.IGNORECASE):
   sql=re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", sql, flags=re.IGNORECASE).rstrip().rstrip(";")
   sql += " ON CONFLICT DO NOTHING"
- sql=re.sub(r"datetime\(([^)]+)\)\s*>=\s*datetime\('now'\)", r"CAST(\1 AS timestamptz) >= NOW()", sql, flags=re.IGNORECASE)
+ sql=re.sub(r"datetime\(([^)]+)\)\s*(>=|<=|<|>)\s*datetime\('now'\)", r"CAST(\1 AS timestamptz) \2 NOW()", sql, flags=re.IGNORECASE)
  return sql
 
 class PostgresConnection:
