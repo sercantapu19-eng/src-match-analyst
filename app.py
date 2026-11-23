@@ -617,7 +617,8 @@ def new_match():
   with db() as c:
    cur=c.execute("INSERT INTO matches(home,away,league,kickoff,status,odds_home,odds_draw,odds_away,htft,over25,btts,first_half_btts,second_half_btts,corners,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",(d["home"],d["away"],d["league"],d["kickoff"],"scheduled",d["odds_home"],d["odds_draw"],d["odds_away"],d["htft"],d["over25"],d["btts"],d["first_half_btts"],d["second_half_btts"],d["corners"],d["notes"],datetime.utcnow().isoformat()))
    sync_prediction_rows(c,cur.fetchone()["id"])
-  flash("Maç kaydedildi.","success"); return redirect("/")
+  flash("Maç kaydedildi. Kaydedilen maçlar bölümünden her zaman ulaşabilirsin.","success")
+ return redirect(url_for("detail",mid=mid))
  return render_template("form.html",data={})
 
 @app.post("/match/<int:mid>/save")
@@ -627,7 +628,8 @@ def save(mid):
  with db() as c:
   if c.execute("SELECT 1 FROM matches WHERE id=?",(mid,)).fetchone():
    c.execute("INSERT INTO user_saved_matches(user_id,match_id,saved_at) VALUES(?,?,?) ON CONFLICT(user_id,match_id) DO NOTHING",(uid,mid,datetime.utcnow().isoformat()))
- return redirect(request.referrer or "/")
+ flash("Maç kaydedildi. Kaydedilen maçlar bölümünden her zaman ulaşabilirsin.","success")
+ return redirect(url_for("detail",mid=mid))
 @app.post("/match/<int:mid>/unsave")
 @login_required
 def unsave(mid):
