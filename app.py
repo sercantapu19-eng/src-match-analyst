@@ -7,6 +7,7 @@ from prediction_engine import predict, prepare_history
 from auth import auth_bp, current_user_id, init_auth_db, login_required
 
 app=Flask(__name__); app.secret_key=os.environ.get("SECRET_KEY","change-this-before-deploy")
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production"))
 DB_PATH=os.environ.get("DATABASE_PATH",os.path.join(os.path.dirname(__file__),"src_match_analyst.db"))
 MARKETS=[("match_result","Maç Sonucu"),("htft","İY/MS"),("over25","2,5 Gol"),("btts","KG"),("first_half_btts","1. Yarı KG"),("second_half_btts","2. Yarı KG"),("corners","Korner Alt/Üst")]
 
@@ -257,6 +258,7 @@ def index():
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count)
 
+@login_required
 @app.post("/sync/fixtures")
 def sync_fixtures():
  day=request.form.get("date") or date.today().isoformat()
@@ -362,6 +364,7 @@ def refresh_live_fixtures():
   app.logger.exception("Live fixture refresh failed")
   return jsonify({"error":str(exc)}),500
 
+@login_required
 @app.post("/sync/history/start")
 def start_history_sync():
  today=date.today()
@@ -377,6 +380,7 @@ def start_history_sync():
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(cur.fetchone()["id"],)).fetchone()
  return jsonify(history_job_payload(job))
 
+@login_required
 @app.get("/sync/history/status")
 def history_sync_status():
  job_id=request.args.get("job_id",type=int)
@@ -385,6 +389,7 @@ def history_sync_status():
  if not job:return jsonify({"status":"idle","percent":0})
  return jsonify(history_job_payload(job))
 
+@login_required
 @app.post("/sync/history/step")
 def history_sync_step():
  payload=request.get_json(silent=True) or {}
@@ -507,6 +512,7 @@ def history_sync_step():
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone()
  return jsonify(history_job_payload(job))
 
+@login_required
 @app.route("/match/new",methods=["GET","POST"])
 def new_match():
  if request.method=="POST":
@@ -545,12 +551,14 @@ def detail(mid):
   market_probabilities=json.loads(m["market_probabilities"] or "{}")
  if not m:return "Maç bulunamadı",404
  return render_template("detail.html",m=m,results=rs,markets=MARKETS,confidence=confidence,market_probabilities=market_probabilities)
+@login_required
 @app.post("/match/<int:mid>/status")
 def status(mid):
  st=request.form.get("status","scheduled")
  if st not in ("scheduled","live","finished"):st="scheduled"
  with db() as c:c.execute("UPDATE matches SET status=? WHERE id=?",(st,mid))
  return redirect(url_for("detail",mid=mid))
+@login_required
 @app.post("/match/<int:mid>/result")
 def result(mid):
  with db() as c:
