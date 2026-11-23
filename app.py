@@ -70,11 +70,24 @@ class PostgresConnection:
  def execute(self, query, params=()):
   return self._connection.execute(translate_postgres_sql(query), params)
 
+class SQLiteConnectionContext:
+ def __init__(self, connection):
+  self.connection=connection
+ def __enter__(self):
+  return self.connection
+ def __exit__(self, exc_type, exc_value, traceback):
+  try:
+   return self.connection.__exit__(exc_type, exc_value, traceback)
+  finally:
+   self.connection.close()
+
+
 def db():
  database_url=os.environ.get("DATABASE_URL","").strip()
  if database_url:
   return PostgresConnection(database_url)
- c=sqlite3.connect(DB_PATH); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
+ c=sqlite3.connect(DB_PATH); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON")
+ return SQLiteConnectionContext(c)
 
 
 def migrate_legacy_sqlite_to_postgres():
