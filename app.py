@@ -256,7 +256,7 @@ def index():
   live_count=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='live'",(day,)).fetchone()[0]
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
-  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count)
+  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count,\n  is_admin=bool(current_user_id() and (session_email:=__import__("flask").session.get("user_email", "")).casefold() in {x.strip().casefold() for x in os.environ.get("ADMIN_EMAILS", "").split(",") if x.strip()}))
 
 @admin_required
 @app.post("/sync/fixtures")
