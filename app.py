@@ -1,4 +1,4 @@
-import os, sqlite3, json, time
+import os, sqlite3, json, time, re
 from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 from football_provider import FootballProvider, ProviderError
@@ -8,10 +8,73 @@ app=Flask(__name__); app.secret_key=os.environ.get("SECRET_KEY","change-this-bef
 DB_PATH=os.environ.get("DATABASE_PATH",os.path.join(os.path.dirname(__file__),"src_match_analyst.db"))
 MARKETS=[("match_result","Maç Sonucu"),("htft","İY/MS"),("over25","2,5 Gol"),("btts","KG"),("first_half_btts","1. Yarı KG"),("second_half_btts","2. Yarı KG"),("corners","Korner Alt/Üst")]
 
+class HybridRow(dict):
+ def __init__(self, columns, values):
+  super().__init__(zip(columns, values))
+  self._columns=tuple(columns)
+ def __getitem__(self, key):
+  if isinstance(key, int): key=self._columns[key]
+  return super().__getitem__(key)
+
+def postgres_row_factory(cursor):
+ columns=[item.name for item in cursor.description] if cursor.description else []
+ return lambda values: HybridRow(columns, values)
+
+class PostgresConnection:
+ def __init__(self, url):
+  import psycopg
+  self._connection=psycopg.connect(url, connect_timeout=10, row_factory=postgres_row_factory)
+ def __enter__(self):
+  self._connection.__enter__()
+  return self
+ def __exit__(self, exc_type, exc_value, traceback):
+  return self._connection.__exit__(exc_type, exc_value, traceback)
+ def execute(self, query, params=()):
+  sql=query.replace("?", "%s")
+  if re.search(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", sql, flags=re.IGNORECASE):
+   sql=re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", sql, flags=re.IGNORECASE).rstrip().rstrip(";")
+   sql += " ON CONFLICT DO NOTHING"
+  sql=re.sub(r"datetime\(([^)]+)\)\s*>=\s*datetime\('now'\)", r"CAST(\1 AS timestamptz) >= NOW()", sql, flags=re.IGNORECASE)
+  return self._connection.execute(sql, params)
+
 def db():
+ database_url=os.environ.get("DATABASE_URL","").strip()
+ if database_url:
+  return PostgresConnection(database_url)
  c=sqlite3.connect(DB_PATH); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
 
 def init_db():
+ if os.environ.get("DATABASE_URL","").strip():
+  with db() as c:
+   c.execute("""CREATE TABLE IF NOT EXISTS matches(
+    id BIGSERIAL PRIMARY KEY,home TEXT NOT NULL,away TEXT NOT NULL,league TEXT DEFAULT '',
+    kickoff TEXT DEFAULT '',status TEXT DEFAULT 'scheduled',odds_home TEXT DEFAULT '',odds_draw TEXT DEFAULT '',
+    odds_away TEXT DEFAULT '',htft TEXT DEFAULT '',over25 TEXT DEFAULT '',btts TEXT DEFAULT '',
+    first_half_btts TEXT DEFAULT '',second_half_btts TEXT DEFAULT '',corners TEXT DEFAULT '',
+    notes TEXT DEFAULT '',created_at TEXT NOT NULL,provider TEXT DEFAULT '',external_id TEXT DEFAULT '',
+    home_goals INTEGER,away_goals INTEGER,ht_home INTEGER,ht_away INTEGER,status_short TEXT DEFAULT '',
+    elapsed_minute TEXT,match_result TEXT DEFAULT '',prediction_confidence TEXT DEFAULT '{}',
+    market_probabilities TEXT DEFAULT '{}',prediction_message TEXT DEFAULT '',analysis_notes TEXT DEFAULT '')""")
+   c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS elapsed_minute TEXT")
+   c.execute("ALTER TABLE matches ALTER COLUMN elapsed_minute TYPE TEXT USING elapsed_minute::TEXT")
+   c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_fixture ON matches(provider,external_id) WHERE external_id <> ''")
+   c.execute("""CREATE TABLE IF NOT EXISTS saved_matches(
+    id BIGSERIAL PRIMARY KEY,match_id BIGINT NOT NULL UNIQUE REFERENCES matches(id) ON DELETE CASCADE,saved_at TEXT NOT NULL)""")
+   c.execute("""CREATE TABLE IF NOT EXISTS results(
+    id BIGSERIAL PRIMARY KEY,match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    market TEXT NOT NULL,prediction TEXT NOT NULL,actual TEXT DEFAULT '',outcome TEXT DEFAULT 'pending',
+    UNIQUE(match_id,market))""")
+   c.execute("""CREATE TABLE IF NOT EXISTS sync_log(
+    id BIGSERIAL PRIMARY KEY,provider TEXT,day TEXT,ran_at TEXT,fixtures_count INTEGER DEFAULT 0,status TEXT,message TEXT)""")
+   c.execute("""CREATE TABLE IF NOT EXISTS sync_jobs(
+    id BIGSERIAL PRIMARY KEY,phase TEXT NOT NULL,status TEXT NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,
+    cursor_date TEXT NOT NULL,total_days INTEGER NOT NULL,processed_days INTEGER DEFAULT 0,fixtures_count INTEGER DEFAULT 0,
+    predictions_total INTEGER DEFAULT 0,predictions_processed INTEGER DEFAULT 0,fetched_count INTEGER DEFAULT 0,
+    skipped_count INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,last_error TEXT DEFAULT '',
+    created_at TEXT NOT NULL,updated_at TEXT NOT NULL,team_names TEXT DEFAULT '[]',team_index INTEGER DEFAULT 0)""")
+   c.execute("ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS team_names TEXT DEFAULT '[]'")
+   c.execute("ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS team_index INTEGER DEFAULT 0")
+  return
  with db() as c:
   c.execute("""CREATE TABLE IF NOT EXISTS matches(
    id INTEGER PRIMARY KEY AUTOINCREMENT,home TEXT NOT NULL,away TEXT NOT NULL,league TEXT DEFAULT '',
@@ -242,8 +305,8 @@ def start_history_sync():
   if active:
    return jsonify(history_job_payload(active))
   cur=c.execute("""INSERT INTO sync_jobs(phase,status,start_date,end_date,cursor_date,total_days,team_names,team_index,created_at,updated_at)
-   VALUES('history','running',?,?,?,?,?,?,?,?)""",(start.isoformat(),end.isoformat(),start.isoformat(),(end-start).days+1,"[]",0,now,now))
-  job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(cur.lastrowid,)).fetchone()
+   VALUES('history','running',?,?,?,?,?,?,?,?) RETURNING id""",(start.isoformat(),end.isoformat(),start.isoformat(),(end-start).days+1,"[]",0,now,now))
+  job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(cur.fetchone()["id"],)).fetchone()
  return jsonify(history_job_payload(job))
 
 @app.get("/sync/history/status")
@@ -353,8 +416,8 @@ def new_match():
   d={k:request.form.get(k,"").strip() for k in keys}
   if not d["home"] or not d["away"]: flash("İki takım adı zorunludur.","error"); return render_template("form.html",data=d)
   with db() as c:
-   cur=c.execute("INSERT INTO matches(home,away,league,kickoff,status,odds_home,odds_draw,odds_away,htft,over25,btts,first_half_btts,second_half_btts,corners,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(d["home"],d["away"],d["league"],d["kickoff"],"scheduled",d["odds_home"],d["odds_draw"],d["odds_away"],d["htft"],d["over25"],d["btts"],d["first_half_btts"],d["second_half_btts"],d["corners"],d["notes"],datetime.utcnow().isoformat()))
-   sync_prediction_rows(c,cur.lastrowid)
+   cur=c.execute("INSERT INTO matches(home,away,league,kickoff,status,odds_home,odds_draw,odds_away,htft,over25,btts,first_half_btts,second_half_btts,corners,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",(d["home"],d["away"],d["league"],d["kickoff"],"scheduled",d["odds_home"],d["odds_draw"],d["odds_away"],d["htft"],d["over25"],d["btts"],d["first_half_btts"],d["second_half_btts"],d["corners"],d["notes"],datetime.utcnow().isoformat()))
+   sync_prediction_rows(c,cur.fetchone()["id"])
   flash("Maç kaydedildi.","success"); return redirect("/")
  return render_template("form.html",data={})
 
