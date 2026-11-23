@@ -181,6 +181,51 @@ def sync_fixtures():
   flash(f"Beklenmeyen senkronizasyon hatası: {e}", "error")
  return redirect(url_for("index",date=day))
 
+@app.get("/sync/live/refresh")
+def refresh_live_fixtures():
+ day=request.args.get("date") or date.today().isoformat()
+ try:
+  provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
+  fixtures=provider.fixtures(day,status="live")
+  with db() as c:
+   for f in fixtures:
+    if f.get("status")!="live" or not f.get("id"): continue
+    c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
+      home_goals,away_goals,status_short,elapsed_minute)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
+      home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
+      status='live',home_goals=COALESCE(excluded.home_goals,matches.home_goals),
+      away_goals=COALESCE(excluded.away_goals,matches.away_goals),
+      status_short=excluded.status_short,
+      elapsed_minute=COALESCE(excluded.elapsed_minute,matches.elapsed_minute)""",
+      (f["home"],f["away"],f["league"],f["kickoff"],"live",datetime.utcnow().isoformat(),
+       "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["status_short"],f.get("elapsed_minute")))
+   rows=c.execute("""SELECT id,status_short,elapsed_minute,home_goals,away_goals
+    FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY kickoff""",(day,)).fetchall()
+  result=[]
+  for row in rows:
+   code=str(row["status_short"] or "").upper()
+   minute=str(row["elapsed_minute"] or "").strip()
+   if code in ("HT","INT","BREAK","BT"):
+    label="Devre Arası"
+   elif minute:
+    label=f"Canlı {minute}{'' if minute.endswith(chr(39)) else chr(39)}"
+   elif code in ("1H","1ST_HALF"):
+    label="Canlı · 1. Yarı"
+   elif code in ("2H","2ND_HALF"):
+    label="Canlı · 2. Yarı"
+   else:
+    label="Canlı"
+   result.append({"id":row["id"],"minute_label":label,
+    "score":f"{row['home_goals']} – {row['away_goals']}" if row["home_goals"] is not None and row["away_goals"] is not None else "—"})
+  return jsonify({"matches":result,"updated_at":datetime.utcnow().isoformat()})
+ except ProviderError as exc:
+  return jsonify({"error":str(exc)}),502
+ except Exception as exc:
+  app.logger.exception("Live fixture refresh failed")
+  return jsonify({"error":str(exc)}),500
+
 @app.post("/sync/history/start")
 def start_history_sync():
  today=date.today()
