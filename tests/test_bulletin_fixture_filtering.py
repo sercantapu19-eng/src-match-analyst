@@ -11,7 +11,9 @@ class BulletinFixtureFilteringTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.old_db_path = application.DB_PATH
+        self.old_database_path_env = os.environ.get("DATABASE_PATH")
         application.DB_PATH = os.path.join(self.tempdir.name, "bulletin.db")
+        os.environ["DATABASE_PATH"] = application.DB_PATH
         application.init_db()
         application.init_auth_db()
         self.client = application.app.test_client()
@@ -20,6 +22,10 @@ class BulletinFixtureFilteringTests(unittest.TestCase):
 
     def tearDown(self):
         application.DB_PATH = self.old_db_path
+        if self.old_database_path_env is None:
+            os.environ.pop("DATABASE_PATH", None)
+        else:
+            os.environ["DATABASE_PATH"] = self.old_database_path_env
         self.tempdir.cleanup()
 
     def add_match(self, home, away, kickoff, status="scheduled", league="Test League"):
