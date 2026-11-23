@@ -1,74 +1,161 @@
+"""Transparent football prediction model based on imported finished match results.
+
+No odds or injury assumptions are invented. Markets requiring unavailable data
+(corners) are deliberately omitted.
+"""
 import math
 from collections import defaultdict
 
-MIN_TEAM_MATCHES = 4
 RECENT_LIMIT = 10
-MAX_GOALS = 8
+MIN_TEAM_MATCHES = 4
+MIN_HALF_MATCHES = 4
+MAX_GOALS = 10
 
-def poisson(lam, k):
-    return math.exp(-lam) * (lam ** k) / math.factorial(k)
-
-def score_matrix(home_xg, away_xg):
-    hp = [poisson(home_xg, i) for i in range(MAX_GOALS + 1)]
-    ap = [poisson(away_xg, i) for i in range(MAX_GOALS + 1)]
-    return [[hp[h] * ap[a] for a in range(MAX_GOALS + 1)] for h in range(MAX_GOALS + 1)]
-
-def mean(values, fallback=0.0):
+def _mean(values, fallback):
     return sum(values) / len(values) if values else fallback
 
-def team_rates(rows, team):
-    selected = [r for r in rows if r["home"] == team or r["away"] == team][-RECENT_LIMIT:]
-    gf, ga, hgf, hga, s2gf, s2ga = [], [], [], [], [], []
+def _poisson(lam, goals):
+    return math.exp(-lam) * (lam ** goals) / math.factorial(goals)
+
+def _matrix(home_xg, away_xg):
+    hp = [_poisson(home_xg, i) for i in range(MAX_GOALS + 1)]
+    ap = [_poisson(away_xg, i) for i in range(MAX_GOALS + 1)]
+    return [[hp[h] * ap[a] for a in range(MAX_GOALS + 1)] for h in range(MAX_GOALS + 1)]
+
+def _team_rows(rows, team):
+    found = []
+    for row in rows:
+        if row.get("home") == team or row.get("away") == team:
+            if row.get("home_goals") is not None and row.get("away_goals") is not None:
+                found.append(row)
+    return found[-RECENT_LIMIT:]
+
+def _rates(rows, team, venue=None):
+    selected = _team_rows(rows, team)
+    if venue:
+        at_venue = [r for r in selected if (r.get("home") == team) == (venue == "home")]
+        # Venue split is useful when it has enough samples; otherwise use all recent form.
+        if len(at_venue) >= 3:
+            selected = at_venue
+    gf, ga, ht_gf, ht_ga, sh_gf, sh_ga = [], [], [], [], [], []
     for r in selected:
-        home = r["home"] == team
-        own = r["home_goals"] if home else r["away_goals"]
-        opp = r["away_goals"] if home else r["home_goals"]
-        own_ht = r["ht_home"] if home else r["ht_away"]
-        opp_ht = r["ht_away"] if home else r["ht_home"]
-        if own is None or opp is None: continue
+        is_home = r.get("home") == team
+        own = r.get("home_goals") if is_home else r.get("away_goals")
+        opp = r.get("away_goals") if is_home else r.get("home_goals")
+        own_ht = r.get("ht_home") if is_home else r.get("ht_away")
+        opp_ht = r.get("ht_away") if is_home else r.get("ht_home")
+        if own is None or opp is None:
+            continue
         gf.append(float(own)); ga.append(float(opp))
         if own_ht is not None and opp_ht is not None:
-            hgf.append(float(own_ht)); hga.append(float(opp_ht))
-            s2gf.append(max(0.0,float(own)-float(own_ht)))
-            s2ga.append(max(0.0,float(opp)-float(opp_ht)))
-    return {"n":len(gf),"gf":mean(gf),"ga":mean(ga),"hgf":mean(hgf),
-            "hga":mean(hga),"s2gf":mean(s2gf),"s2ga":mean(s2ga),"half_n":len(hgf)}
+            own_ht, opp_ht = float(own_ht), float(opp_ht)
+            if own_ht <= float(own) and opp_ht <= float(opp):
+                ht_gf.append(own_ht); ht_ga.append(opp_ht)
+                sh_gf.append(float(own) - own_ht); sh_ga.append(float(opp) - opp_ht)
+    return {
+        "n": len(gf), "gf": _mean(gf, 1.15), "ga": _mean(ga, 1.15),
+        "ht_n": len(ht_gf), "ht_gf": _mean(ht_gf, .5), "ht_ga": _mean(ht_ga, .5),
+        "sh_gf": _mean(sh_gf, .65), "sh_ga": _mean(sh_ga, .65),
+    }
+
+def _outcome(matrix):
+    home = draw = away = over = btts = 0.0
+    for h in range(MAX_GOALS + 1):
+        for a in range(MAX_GOALS + 1):
+            p = matrix[h][a]
+            if h > a: home += p
+            elif h == a: draw += p
+            else: away += p
+            if h + a >= 3: over += p
+            if h > 0 and a > 0: btts += p
+    return {"1": home, "X": draw, "2": away}, over, btts
+
+def _both_score_prob(x, y):
+    return (1 - math.exp(-x)) * (1 - math.exp(-y))
 
 def predict(match, history):
-    rows=[r for r in history if r["status"]=="finished" and r["home_goals"] is not None and r["away_goals"] is not None and r["id"]!=match["id"]]
-    home=team_rates(rows,match["home"]); away=team_rates(rows,match["away"])
-    if home["n"]<MIN_TEAM_MATCHES or away["n"]<MIN_TEAM_MATCHES:
-        return None, f"Yeterli geçmiş veri yok. Tahmin için her takımın en az {MIN_TEAM_MATCHES} tamamlanmış maçına ihtiyaç var (ev sahibi: {home['n']}, deplasman: {away['n']})."
-    avg_home=mean([float(r["home_goals"]) for r in rows if r["home_goals"] is not None],1.35)
-    avg_away=mean([float(r["away_goals"]) for r in rows if r["away_goals"] is not None],1.10)
-    xh=max(.15,min(3.8,(.65*home["gf"]+.35*avg_home+.65*away["ga"]+.35*avg_home)/2))
-    xa=max(.15,min(3.8,(.65*away["gf"]+.35*avg_away+.65*home["ga"]+.35*avg_away)/2))
-    matrix=score_matrix(xh,xa)
-    over=sum(matrix[h][a] for h in range(9) for a in range(9) if h+a>=3)
-    btts=sum(matrix[h][a] for h in range(1,9) for a in range(1,9))
-    predictions={"over25":"Üst 2,5" if over>=.5 else "Alt 2,5","btts":"Var" if btts>=.5 else "Yok"}
-    confidence={"over25":round(max(over,1-over)*100),"btts":round(max(btts,1-btts)*100)}
-    if home["half_n"]>=MIN_TEAM_MATCHES and away["half_n"]>=MIN_TEAM_MATCHES:
-        h1=max(.08,(home["hgf"]+away["hga"])/2); a1=max(.08,(away["hgf"]+home["hga"])/2)
-        h2=max(.08,(home["s2gf"]+away["s2ga"])/2); a2=max(.08,(away["s2gf"]+home["s2ga"])/2)
-        def both(x,y): return (1-math.exp(-x))*(1-math.exp(-y))
-        p1,p2=both(h1,a1),both(h2,a2)
-        predictions["first_half_btts"]="Var" if p1>=.5 else "Yok"
-        predictions["second_half_btts"]="Var" if p2>=.5 else "Yok"
-        confidence["first_half_btts"]=round(max(p1,1-p1)*100)
-        confidence["second_half_btts"]=round(max(p2,1-p2)*100)
-        ht=score_matrix(h1,a1); sh=score_matrix(h2,a2); combos=defaultdict(float)
-        for h in range(9):
-            for a in range(9):
-                hr="1" if h>a else "X" if h==a else "2"
-                for x in range(9):
-                    for y in range(9):
-                        fr="1" if h+x>a+y else "X" if h+x==a+y else "2"
-                        combos[hr+"/"+fr]+=ht[h][a]*sh[x][y]
-        best=max(combos,key=combos.get)
-        predictions["htft"]=best; confidence["htft"]=round(combos[best]*100)
-    notes=(f"Geçmiş maç istatistik modeli · Son {RECENT_LIMIT} maça kadar; örneklem ev sahibi {home['n']}, "
-           f"deplasman {away['n']}. Beklenen gol: {xh:.2f} – {xa:.2f}. "
-           "Olasılıklar garanti değildir; sakatlık, kadro ve bahis oranları modele dahil değildir. "
-           "Doğrulanmış korner geçmişi bulunmadığından korner tahmini üretilmedi.")
-    return {"predictions":predictions,"confidence":confidence,"notes":notes},None
+    valid = [
+        r for r in history
+        if r.get("status") == "finished"
+        and r.get("home_goals") is not None and r.get("away_goals") is not None
+        and str(r.get("id")) != str(match.get("id"))
+    ]
+    # Prefer same-competition history; do not mix unrelated leagues if enough data exists.
+    same_league = [r for r in valid if (r.get("league") or "").casefold() == (match.get("league") or "").casefold()]
+    league_rows = same_league if len(same_league) >= 12 else valid
+    home_all = _rates(league_rows, match["home"])
+    away_all = _rates(league_rows, match["away"])
+    if home_all["n"] < MIN_TEAM_MATCHES or away_all["n"] < MIN_TEAM_MATCHES:
+        return None, (
+            f"Tahmin için geçmiş veri yetersiz. Son {RECENT_LIMIT} maç içinde en az "
+            f"{MIN_TEAM_MATCHES} tamamlanmış maç gerekli. "
+            f"{match['home']}: {home_all['n']}, {match['away']}: {away_all['n']} maç."
+        )
+
+    home_home = _rates(league_rows, match["home"], "home")
+    away_away = _rates(league_rows, match["away"], "away")
+    avg_home = _mean([float(r["home_goals"]) for r in league_rows if r.get("home_goals") is not None], 1.4)
+    avg_away = _mean([float(r["away_goals"]) for r in league_rows if r.get("away_goals") is not None], 1.1)
+    # Blend venue-specific and overall recent form. Clamp extreme samples.
+    home_attack = .65 * home_home["gf"] + .35 * home_all["gf"]
+    away_defence = .65 * away_away["ga"] + .35 * away_all["ga"]
+    away_attack = .65 * away_away["gf"] + .35 * away_all["gf"]
+    home_defence = .65 * home_home["ga"] + .35 * home_all["ga"]
+    home_xg = max(.15, min(4.0, .52 * home_attack + .28 * away_defence + .20 * avg_home))
+    away_xg = max(.15, min(4.0, .52 * away_attack + .28 * home_defence + .20 * avg_away))
+    matrix = _matrix(home_xg, away_xg)
+    result_probs, over_prob, btts_prob = _outcome(matrix)
+
+    best_result = max(result_probs, key=result_probs.get)
+    predictions = {
+        "match_result": {"1": "MS 1", "X": "MS X", "2": "MS 2"}[best_result],
+        "over25": "Üst 2,5" if over_prob >= .5 else "Alt 2,5",
+        "btts": "Var" if btts_prob >= .5 else "Yok",
+    }
+    confidence = {
+        "match_result": round(result_probs[best_result] * 100),
+        "over25": round((over_prob if over_prob >= .5 else 1 - over_prob) * 100),
+        "btts": round((btts_prob if btts_prob >= .5 else 1 - btts_prob) * 100),
+    }
+
+    # Half-time and second-half markets are calculated only when both teams have
+    # enough actual half-time scores in the imported history.
+    home_half = _rates(league_rows, match["home"], "home")
+    away_half = _rates(league_rows, match["away"], "away")
+    if home_half["ht_n"] >= MIN_HALF_MATCHES and away_half["ht_n"] >= MIN_HALF_MATCHES:
+        h1 = max(.08, .55 * home_half["ht_gf"] + .45 * away_half["ht_ga"])
+        a1 = max(.08, .55 * away_half["ht_gf"] + .45 * home_half["ht_ga"])
+        p1 = _both_score_prob(h1, a1)
+        h2 = max(.08, .55 * home_half["sh_gf"] + .45 * away_half["sh_ga"])
+        a2 = max(.08, .55 * away_half["sh_gf"] + .45 * home_half["sh_ga"])
+        p2 = _both_score_prob(h2, a2)
+        predictions["first_half_btts"] = "Var" if p1 >= .5 else "Yok"
+        predictions["second_half_btts"] = "Var" if p2 >= .5 else "Yok"
+        confidence["first_half_btts"] = round((p1 if p1 >= .5 else 1-p1) * 100)
+        confidence["second_half_btts"] = round((p2 if p2 >= .5 else 1-p2) * 100)
+
+        # Approximate HT/FT by independent first- and second-half score distributions.
+        first = _matrix(h1, a1)
+        second = _matrix(h2, a2)
+        combos = defaultdict(float)
+        for h in range(MAX_GOALS + 1):
+            for a in range(MAX_GOALS + 1):
+                half = "1" if h > a else "X" if h == a else "2"
+                for x in range(MAX_GOALS + 1):
+                    for y in range(MAX_GOALS + 1):
+                        full = "1" if h+x > a+y else "X" if h+x == a+y else "2"
+                        combos[half + "/" + full] += first[h][a] * second[x][y]
+        best_htft = max(combos, key=combos.get)
+        predictions["htft"] = best_htft
+        confidence["htft"] = round(combos[best_htft] * 100)
+
+    notes = (
+        f"İstatistik modeli · Son {RECENT_LIMIT} maçlık form (mevcut veri kadar). "
+        f"Örneklem: {match['home']} {home_all['n']} maç, {match['away']} {away_all['n']} maç. "
+        f"Modelin beklenen gol tahmini: {home_xg:.2f} – {away_xg:.2f}. "
+        "MS, 2,5 gol ve KG olasılıkları Poisson gol dağılımıyla hesaplandı. "
+        "İY/2Y pazarları yalnızca yeterli devre skoru bulunan geçmiş maçlarla hesaplanır. "
+        "Sakatlık, ilk 11, motivasyon ve bahis oranları henüz modele dahil değildir. "
+        "Korner verisi doğrulanmadığı için korner tahmini üretilmez."
+    )
+    return {"predictions": predictions, "confidence": confidence, "notes": notes}, None
