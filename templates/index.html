@@ -23,8 +23,9 @@
   button.disabled=true;button.textContent="Senkronizasyon sürüyor…";
   try{
    let job=existingJob;
+   let response;
    if(!job){
-    let response=await fetch("/sync/history/start",{method:"POST"});
+    response=await fetch("/sync/history/start",{method:"POST"});
     if(!response.ok)throw new Error("İş başlatılamadı ("+response.status+")");
     job=await response.json();
    }
