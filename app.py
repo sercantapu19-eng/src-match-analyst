@@ -451,10 +451,10 @@ def refresh_live_fixtures():
        fixture.get("home_goals"),fixture.get("away_goals"),row["id"]))
     updated_ids.add(row["id"])
    # Expire old live flags without deleting the match or its prediction/history rows.
+   stale_cutoff=(datetime.now(ZoneInfo("Europe/Istanbul"))-timedelta(hours=4)).isoformat()
    c.execute("""UPDATE matches SET status='scheduled',status_short='UNVERIFIED',
       elapsed_minute=NULL
-      WHERE substr(kickoff,1,10)=? AND status='live'
-       AND datetime(kickoff) < datetime('now','-4 hours')""",(day,))
+      WHERE substr(kickoff,1,10)=? AND status='live' AND kickoff < ?""",(day,stale_cutoff))
    rows=c.execute("""SELECT id,status_short,elapsed_minute,home_goals,away_goals
     FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY kickoff""",(day,)).fetchall()
   result=[]
