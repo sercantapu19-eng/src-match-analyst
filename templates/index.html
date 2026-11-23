@@ -33,7 +33,16 @@
    }
   }catch(error){status.textContent="Bağlantı hatası: "+error.message+" · Sayfayı yenileyip yeniden başlatabilirsin.";button.disabled=false;button.textContent="Yeniden dene";}
  }
+ async function restoreStatus(){
+  try{
+   const response=await fetch("/sync/history/status");
+   if(!response.ok)return;
+   const job=await response.json();
+   if(job.status && job.status!=="idle")show(job);
+  }catch(_error){/* Keep the static status if the endpoint is unavailable. */}
+ }
  button.addEventListener("click",run);
+ restoreStatus();
 })();
 </script>
 <nav class="bulletin-tabs"><a class="{{'active' if view=='upcoming' else ''}}" href="/?date={{day}}&view=upcoming">Oynanmamış maçlar <span>{{upcoming_count}}</span></a><a class="{{'active' if view=='live' else ''}}" href="/?date={{day}}&view=live">Canlı maçlar <span>{{live_count}}</span></a><a class="{{'active' if view=='completed' else ''}}" href="/?date={{day}}&view=completed">Tamamlananlar</a></nav>
