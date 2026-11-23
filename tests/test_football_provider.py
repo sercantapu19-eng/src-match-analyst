@@ -133,10 +133,13 @@ class FootballProviderTests(unittest.TestCase):
             def json(self):
                 return {"matches": [
                     {"slug": "team-a-vs-team-b", "home": "Team A", "away": "Team B",
+                     "date": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
                      "status": "live", "status_text": "Live 67'", "home_score": 1, "away_score": 1},
                     {"slug": "team-c-vs-team-d", "home": "Team C", "away": "Team D",
+                     "date": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
                      "status": "finished", "status_text": "FT", "home_score": 2, "away_score": 0},
                     {"slug": "team-e-vs-team-f", "home": "Team E", "away": "Team F",
+                     "date": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
                      "status": "live", "status_text": "1st Half", "home_score": 0, "away_score": 0}
                 ]}
         class LiveWidgetSession:
@@ -156,6 +159,32 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(rows[0]["status"], "live")
         self.assertIsNone(rows[1]["elapsed_minute"])
         self.assertEqual(rows[1]["status"], "live")
+
+
+    def test_live_widget_rejects_seven_hour_old_and_undated_rows(self):
+        from datetime import datetime, timedelta, timezone
+        provider = FootballProvider()
+        now = datetime.now(timezone.utc)
+        class StaleLiveResponse:
+            status_code = 200
+            ok = True
+            text = ""
+            def json(self):
+                return {"matches": [
+                    {"slug": "old-match", "home": "Old A", "away": "Old B",
+                     "date": (now - timedelta(hours=7)).isoformat(),
+                     "status": "live", "status_text": "Live 72'", "home_score": 1, "away_score": 0},
+                    {"slug": "no-date", "home": "Unknown A", "away": "Unknown B",
+                     "status": "live", "status_text": "Live 12'", "home_score": 0, "away_score": 0},
+                    {"slug": "finished", "home": "Done A", "away": "Done B",
+                     "date": (now - timedelta(hours=2)).isoformat(),
+                     "status": "finished", "status_text": "FT", "home_score": 2, "away_score": 1}
+                ]}
+        class StaleLiveSession:
+            def get(self, url, params, timeout):
+                return StaleLiveResponse()
+        provider.session = StaleLiveSession()
+        self.assertEqual(provider.live_matches(), [])
 
     def test_compact_finished_status_codes_are_not_discarded(self):
         provider = FootballProvider()
