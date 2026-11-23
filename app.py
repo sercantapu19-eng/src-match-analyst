@@ -77,11 +77,9 @@ def sync_fixtures():
  day=request.form.get("date") or date.today().isoformat()
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-  fixtures=[]
-  for offset in range(60,-1,-1):
-   target=(date.fromisoformat(day)-timedelta(days=offset)).isoformat()
-   fixtures.extend(provider.fixtures(target))
-   if offset: time.sleep(0.12)
+  # Fetch only the selected day in this request. The previous 61-day loop
+  # made sequential external calls (25s timeout each) inside one sync worker.
+  fixtures=provider.fixtures(day)
   with db() as c:
    for f in fixtures:
     c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
@@ -93,16 +91,39 @@ def sync_fixtures():
       ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,elapsed_minute=excluded.elapsed_minute""",
       (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
        "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
+   # Read finished-match history once and reuse it for all predictions.
+   history=[dict(x) for x in c.execute(
+    "SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff"
+   ).fetchall()]
+   targets=c.execute("SELECT * FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchall()
+   for target in targets:
+    try:
+     data,message=predict(dict(target),history)
+     if not data:
+      c.execute("UPDATE matches SET prediction_message=?,prediction_confidence='{}',analysis_notes='' WHERE id=?",(message,target["id"]))
+      continue
+     for key,value in data["predictions"].items():
+      if key not in dict(MARKETS): continue
+      c.execute("UPDATE matches SET "+key+"=? WHERE id=?",(value,target["id"]))
+      label=dict(MARKETS)[key]
+      c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction",(target["id"],label,value))
+     c.execute("UPDATE matches SET prediction_confidence=?,prediction_message='',analysis_notes=? WHERE id=?",(json.dumps(data["confidence"],ensure_ascii=False),data["notes"],target["id"]))
+    except Exception as prediction_error:
+     # A single bad fixture must not abort the whole daily import.
+     c.execute("UPDATE matches SET prediction_message=? WHERE id=?",(f"Tahmin üretilemedi: {prediction_error}",target["id"]))
    c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
-    ("sportscore",day,datetime.utcnow().isoformat(),len(fixtures),"success",f"SportScore: {len(fixtures)} maç kaydı (61 günlük geçmiş dahil)"))
-   targets=c.execute("SELECT id FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchall()
-   for target in targets: generate_prediction(c,target["id"])
-  flash(f"{len(fixtures)} maç otomatik olarak içe aktarıldı/güncellendi.","success")
+    ("sportscore",day,datetime.utcnow().isoformat(),len(fixtures),"success",f"SportScore: {len(fixtures)} maç kaydı"))
+  flash(f"{len(fixtures)} maç otomatik olarak içe aktarıldı/güncellendi.", "success")
  except ProviderError as e:
-  with db() as c:c.execute("INSERT INTO sync_log(provider,day,ran_at,status,message) VALUES(?,?,?,?,?)",("sportscore",day,datetime.utcnow().isoformat(),"error",str(e)))
-  flash(f"Veri sağlayıcı hatası: {e}","error")
+  with db() as c:
+   c.execute("INSERT INTO sync_log(provider,day,ran_at,status,message) VALUES(?,?,?,?,?)",
+    ("sportscore",day,datetime.utcnow().isoformat(),"error",str(e)))
+  flash(f"Veri sağlayıcı hatası: {e}", "error")
  except Exception as e:
-  flash(f"Beklenmeyen senkronizasyon hatası: {e}","error")
+  with db() as c:
+   c.execute("INSERT INTO sync_log(provider,day,ran_at,status,message) VALUES(?,?,?,?,?)",
+    ("sportscore",day,datetime.utcnow().isoformat(),"error",str(e)))
+  flash(f"Beklenmeyen senkronizasyon hatası: {e}", "error")
  return redirect(url_for("index",date=day))
 
 @app.route("/match/new",methods=["GET","POST"])
