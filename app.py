@@ -1,13 +1,34 @@
-import os, sqlite3, json, time, re
+import os, sqlite3, json, time, re, secrets, hmac
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
 from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required
 
 app=Flask(__name__); app.secret_key=os.environ.get("SECRET_KEY","change-this-before-deploy")
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production"))
+
+def csrf_token():
+ token=session.get("_csrf_token")
+ if not token:
+  token=secrets.token_urlsafe(32)
+  session["_csrf_token"]=token
+ return token
+
+@app.context_processor
+def inject_csrf_token():
+ return {"csrf_token":csrf_token}
+
+@app.before_request
+def enforce_csrf():
+ if request.method not in ("POST","PUT","PATCH","DELETE"):
+  return
+ expected=session.get("_csrf_token")
+ supplied=request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
+ if not expected or not supplied or not hmac.compare_digest(expected,supplied):
+  abort(400, description="CSRF doğrulaması başarısız.")
+
 DB_PATH=os.environ.get("DATABASE_PATH",os.path.join(os.path.dirname(__file__),"src_match_analyst.db"))
 MARKETS=[("match_result","Maç Sonucu"),("htft","İY/MS"),("over25","2,5 Gol"),("btts","KG"),("first_half_btts","1. Yarı KG"),("second_half_btts","2. Yarı KG"),("corners","Korner Alt/Üst")]
 
