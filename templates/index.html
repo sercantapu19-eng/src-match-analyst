@@ -19,12 +19,16 @@
   const detail=job.phase==="history"?(job.processed_days+"/"+job.total_days+" gün · "+job.fetched_count+" kayıt alındı · "+job.fixtures_count+" tamamlanmış maç kaydedildi"):job.phase==="team_history"?(job.team_index+"/"+job.teams_total+" takım geçmişi tarandı · "+job.fixtures_count+" tamamlanmış maç kaydedildi"):(job.predictions_processed+"/"+job.predictions_total+" maç tahmini");
   status.textContent="Çalışıyor · "+detail+" · "+job.percent+"%";
  };
- async function run(){
+ async function run(existingJob=null){
   button.disabled=true;button.textContent="Senkronizasyon sürüyor…";
   try{
-   let response=await fetch("/sync/history/start",{method:"POST"});
-   if(!response.ok)throw new Error("İş başlatılamadı ("+response.status+")");
-   let job=await response.json();show(job);
+   let job=existingJob;
+   if(!job){
+    let response=await fetch("/sync/history/start",{method:"POST"});
+    if(!response.ok)throw new Error("İş başlatılamadı ("+response.status+")");
+    job=await response.json();
+   }
+   show(job);
    while(job.status==="running"){
     await new Promise(resolve=>setTimeout(resolve,250));
     response=await fetch("/sync/history/step",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:job.job_id})});
@@ -38,7 +42,10 @@
    const response=await fetch("/sync/history/status");
    if(!response.ok)return;
    const job=await response.json();
-   if(job.status && job.status!=="idle")show(job);
+   if(job.status && job.status!=="idle"){
+    show(job);
+    if(job.status==="running")run(job);
+   }
   }catch(_error){/* Keep the static status if the endpoint is unavailable. */}
  }
  button.addEventListener("click",run);
