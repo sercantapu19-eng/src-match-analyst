@@ -29,7 +29,7 @@ def init_db():
   c.execute("""CREATE TABLE IF NOT EXISTS sync_log(id INTEGER PRIMARY KEY AUTOINCREMENT,provider TEXT,day TEXT,ran_at TEXT,fixtures_count INTEGER DEFAULT 0,status TEXT,message TEXT)""")
   c.execute("""CREATE TABLE IF NOT EXISTS sync_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT,phase TEXT NOT NULL,status TEXT NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,cursor_date TEXT NOT NULL,total_days INTEGER NOT NULL,processed_days INTEGER DEFAULT 0,fixtures_count INTEGER DEFAULT 0,predictions_total INTEGER DEFAULT 0,predictions_processed INTEGER DEFAULT 0,fetched_count INTEGER DEFAULT 0,skipped_count INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,last_error TEXT DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)""")
   job_cols={r[1] for r in c.execute("PRAGMA table_info(sync_jobs)").fetchall()}
-  for name,typ in [("fetched_count","INTEGER DEFAULT 0"),("skipped_count","INTEGER DEFAULT 0")]:
+  for name,typ in [("fetched_count","INTEGER DEFAULT 0"),("skipped_count","INTEGER DEFAULT 0"),("team_names","TEXT DEFAULT '[]'"),("team_index","INTEGER DEFAULT 0")]:
    if name not in job_cols: c.execute(f"ALTER TABLE sync_jobs ADD COLUMN {name} {typ}")
 
 def sync_prediction_rows(c,mid):
@@ -96,11 +96,13 @@ def rebuild_one_prediction(c, target, history):
   c.execute("UPDATE matches SET prediction_message=? WHERE id=?",(f"Tahmin üretilemedi: {exc}",target["id"]))
 
 def history_job_payload(job):
- total=max(1,job["total_days"]+job["predictions_total"])
- done=job["processed_days"]+job["predictions_processed"]
+ teams=json.loads(job["team_names"] or "[]") if "team_names" in job.keys() else []
+ total=max(1,job["total_days"]+len(teams)+job["predictions_total"])
+ done=job["processed_days"]+job["team_index"]+job["predictions_processed"]
  percent=100 if job["status"]=="completed" else min(99,round(done*100/total))
  return {"job_id":job["id"],"status":job["status"],"phase":job["phase"],
   "processed_days":job["processed_days"],"total_days":job["total_days"],
+  "team_index":job["team_index"] if "team_index" in job.keys() else 0,"teams_total":len(teams),
   "predictions_processed":job["predictions_processed"],"predictions_total":job["predictions_total"],
   "fixtures_count":job["fixtures_count"],"fetched_count":job["fetched_count"],"skipped_count":job["skipped_count"],"percent":percent,"last_error":job["last_error"]}
 
@@ -189,8 +191,8 @@ def start_history_sync():
   active=c.execute("SELECT * FROM sync_jobs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
   if active:
    return jsonify(history_job_payload(active))
-  cur=c.execute("""INSERT INTO sync_jobs(phase,status,start_date,end_date,cursor_date,total_days,created_at,updated_at)
-   VALUES('history','running',?,?,?,?,?,?)""",(start.isoformat(),end.isoformat(),start.isoformat(),(end-start).days+1,now,now))
+  cur=c.execute("""INSERT INTO sync_jobs(phase,status,start_date,end_date,cursor_date,total_days,team_names,team_index,created_at,updated_at)
+   VALUES('history','running',?,?,?,?,?,?,?,?)""",(start.isoformat(),end.isoformat(),start.isoformat(),(end-start).days+1,"[]",0,now,now))
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(cur.lastrowid,)).fetchone()
  return jsonify(history_job_payload(job))
 
@@ -219,15 +221,23 @@ def history_sync_step():
     stats=store_fixtures(c,fixtures)
     next_day=(date.fromisoformat(day)+timedelta(days=1)).isoformat()
     processed=job["processed_days"]+1
+    team_names=json.loads(job["team_names"] or "[]")
     if next_day>job["end_date"]:
-     pred_total=c.execute("SELECT COUNT(*) FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')").fetchone()[0]
-     next_phase="predictions"
-     final_status="completed" if pred_total==0 else "running"
+     rows=c.execute("SELECT home,away FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now') ORDER BY kickoff").fetchall()
+     seen=set()
+     for row in rows:
+      for name in (row["home"],row["away"]):
+       key=" ".join(str(name or "").casefold().split())
+       if key and key not in seen:
+        seen.add(key); team_names.append(str(name))
+     next_phase="team_history" if team_names else "predictions"
+     pred_total=0
+     final_status="running"
     else:
      pred_total=job["predictions_total"]; next_phase="history"; final_status="running"
-    c.execute("""UPDATE sync_jobs SET phase=?,status=?,cursor_date=?,processed_days=?,fixtures_count=fixtures_count+?,
+    c.execute("""UPDATE sync_jobs SET phase=?,status=?,cursor_date=?,processed_days=?,team_names=?,team_index=0,fixtures_count=fixtures_count+?,
       fetched_count=fetched_count+?,skipped_count=skipped_count+?,predictions_total=?,attempts=0,last_error='',updated_at=? WHERE id=?""",
-      (next_phase,final_status,next_day,processed,stats["stored"],stats["fetched"],stats["skipped"],pred_total,datetime.utcnow().isoformat(),job_id))
+      (next_phase,final_status,next_day,processed,json.dumps(team_names,ensure_ascii=False),stats["stored"],stats["fetched"],stats["skipped"],pred_total,datetime.utcnow().isoformat(),job_id))
     if final_status=="completed":
      c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
       ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"]+len(fixtures),"success","180 günlük geçmiş maç verisi tamamlandı"))
@@ -236,6 +246,38 @@ def history_sync_step():
     state="error" if attempts>=3 else "running"
     c.execute("UPDATE sync_jobs SET attempts=?,last_error=?,status=?,updated_at=? WHERE id=?",
      (attempts,str(exc),state,datetime.utcnow().isoformat(),job_id))
+  elif phase=="team_history":
+   team_names=json.loads(job["team_names"] or "[]")
+   index=job["team_index"]
+   if index < len(team_names):
+    team_name=team_names[index]
+    try:
+     provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
+     team_fixtures=provider.team_fixtures_for_team(team_name,limit=30)
+     stats=store_fixtures(c,team_fixtures)
+     team_skipped=stats["skipped"] + (1 if not team_fixtures else 0)
+     error_note=""
+    except Exception as exc:
+     stats={"fetched":0,"stored":0}
+     team_skipped=1
+     error_note=f"{team_name}: {exc}"
+    next_index=index+1
+    is_last=next_index>=len(team_names)
+    if is_last:
+     pred_total=c.execute("SELECT COUNT(*) FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')").fetchone()[0]
+     next_phase="predictions" if pred_total else "completed"
+    else:
+     pred_total=job["predictions_total"]
+     next_phase="team_history"
+    c.execute("""UPDATE sync_jobs SET phase=?,status=?,team_index=?,fixtures_count=fixtures_count+?,
+      fetched_count=fetched_count+?,skipped_count=skipped_count+?,predictions_total=?,
+      last_error=?,updated_at=? WHERE id=?""",
+      (next_phase,"running" if next_phase!="completed" else "completed",next_index,
+       stats["stored"],stats["fetched"],team_skipped,error_note,datetime.utcnow().isoformat(),job_id))
+    if next_phase=="completed":
+     c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
+      ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"]+stats["stored"],"success",
+       f"Geçmiş veri tamamlandı; {job['fetched_count']+stats['fetched']} kayıt alındı, takım geçmişi dahil {job['fixtures_count']+stats['stored']} tamamlanmış maç kaydedildi."))
   elif phase=="predictions":
    history=[dict(x) for x in c.execute("""SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away
     FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff""").fetchall()]
