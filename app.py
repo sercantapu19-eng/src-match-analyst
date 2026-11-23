@@ -259,8 +259,8 @@ def index():
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count,
   is_admin=bool(current_user_id() and session.get("user_email", "").casefold() in {x.strip().casefold() for x in os.environ.get("ADMIN_EMAILS", "").split(",") if x.strip()}))
 
-@admin_required
 @app.post("/sync/fixtures")
+@admin_required
 def sync_fixtures():
  day=request.form.get("date") or date.today().isoformat()
  try:
@@ -365,8 +365,8 @@ def refresh_live_fixtures():
   app.logger.exception("Live fixture refresh failed")
   return jsonify({"error":str(exc)}),500
 
-@admin_required
 @app.post("/sync/history/start")
+@admin_required
 def start_history_sync():
  today=date.today()
  start=today-timedelta(days=180)
@@ -381,8 +381,8 @@ def start_history_sync():
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(cur.fetchone()["id"],)).fetchone()
  return jsonify(history_job_payload(job))
 
-@login_required
 @app.get("/sync/history/status")
+@login_required
 def history_sync_status():
  job_id=request.args.get("job_id",type=int)
  with db() as c:
@@ -390,8 +390,8 @@ def history_sync_status():
  if not job:return jsonify({"status":"idle","percent":0})
  return jsonify(history_job_payload(job))
 
-@admin_required
 @app.post("/sync/history/step")
+@admin_required
 def history_sync_step():
  payload=request.get_json(silent=True) or {}
  job_id=payload.get("job_id")
@@ -513,8 +513,8 @@ def history_sync_step():
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone()
  return jsonify(history_job_payload(job))
 
-@admin_required
 @app.route("/match/new",methods=["GET","POST"])
+@admin_required
 def new_match():
  if request.method=="POST":
   keys=["home","away","league","kickoff","odds_home","odds_draw","odds_away","htft","over25","btts","first_half_btts","second_half_btts","corners","notes"]
@@ -546,21 +546,21 @@ def detail(mid):
   # Lazily rebuild probabilities for fixtures imported before the detailed-market field existed.
   if m and m["status"] == "scheduled" and not json.loads(m["market_probabilities"] or "{}"):
    generate_prediction(c, mid)
-   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id WHERE m.id=?",(mid,)).fetchone()
+   m=c.execute("SELECT m.*,s.id saved FROM matches m LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=? WHERE m.id=?",(current_user_id() or 0,mid)).fetchone()
   rs=c.execute("SELECT * FROM results WHERE match_id=? ORDER BY id",(mid,)).fetchall()
   confidence=json.loads(m["prediction_confidence"] or "{}")
   market_probabilities=json.loads(m["market_probabilities"] or "{}")
  if not m:return "Maç bulunamadı",404
  return render_template("detail.html",m=m,results=rs,markets=MARKETS,confidence=confidence,market_probabilities=market_probabilities)
-@admin_required
 @app.post("/match/<int:mid>/status")
+@admin_required
 def status(mid):
  st=request.form.get("status","scheduled")
  if st not in ("scheduled","live","finished"):st="scheduled"
  with db() as c:c.execute("UPDATE matches SET status=? WHERE id=?",(st,mid))
  return redirect(url_for("detail",mid=mid))
-@admin_required
 @app.post("/match/<int:mid>/result")
+@admin_required
 def result(mid):
  with db() as c:
   for key,label in MARKETS:
