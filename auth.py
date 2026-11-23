@@ -3,7 +3,7 @@ import os
 import sqlite3
 import hashlib
 import hmac
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from urllib.parse import urlsplit
 
@@ -74,7 +74,7 @@ def _rate_key(kind, value):
 
 
 def _auth_rate_limited(email):
-    cutoff = (datetime.utcnow() - timedelta(minutes=15)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
     keys = (_rate_key("email", email), _rate_key("ip", request.remote_addr or "unknown"))
     with _db() as conn:
         for key in keys:
