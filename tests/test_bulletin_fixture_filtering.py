@@ -61,6 +61,23 @@ class BulletinFixtureFilteringTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["status"], "scheduled")
 
+    def test_missing_provider_ids_do_not_create_duplicate_history_rows(self):
+        fixture = {
+            "id": "", "home": "History FC", "away": "Archive United",
+            "league": "Test League", "kickoff": "2026-11-20T18:00:00+03:00",
+            "status": "finished", "home_goals": 2, "away_goals": 1,
+            "ht_home": 1, "ht_away": 0, "status_short": "FT",
+            "elapsed_minute": None
+        }
+        with application.db() as conn:
+            application.store_fixtures(conn, [fixture, dict(fixture)])
+            count = conn.execute(
+                """SELECT COUNT(*) FROM matches
+                   WHERE home='History FC' AND away='Archive United'
+                    AND provider='sportscore' AND COALESCE(external_id,'')=''"""
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
+
     def test_identical_provider_rows_are_shown_once_but_not_deleted(self):
         future = self.now + timedelta(hours=3)
         self.add_match("Macau U15", "Guam U15", future)
