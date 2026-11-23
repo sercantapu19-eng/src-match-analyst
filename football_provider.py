@@ -107,6 +107,7 @@ class FootballProvider:
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "kickoff": self.local_kickoff(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
                 "home_goals": hg, "away_goals": ag,
+                "elapsed_minute": self.pick(item, "elapsed", "elapsed_minute", "minute", "match_minute", default=self.pick(item.get("time", {}) if isinstance(item.get("time"), dict) else {}, "elapsed", "minute")),
                 "ht_home": self.pick(item, "ht_home", "home_ht", default=self.pick(ht, "home", "home_score")),
                 "ht_away": self.pick(item, "ht_away", "away_ht", default=self.pick(ht, "away", "away_score"))
             })
