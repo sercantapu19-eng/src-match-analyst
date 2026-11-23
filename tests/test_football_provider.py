@@ -52,7 +52,7 @@ class FootballProviderTests(unittest.TestCase):
 
         self.assertEqual(fake.params["status"], "finished")
         self.assertEqual(fake.timeout, 10)
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["status"], "finished")
         self.assertEqual(rows[0]["home_goals"], 2)
         self.assertEqual(rows[0]["away_goals"], 1)
