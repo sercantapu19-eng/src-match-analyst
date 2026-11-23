@@ -194,7 +194,7 @@ def register():
                 user = cur.fetchone()
                 user_id = user["id"] if isinstance(user, dict) else user[0]
         if existing:
-            _record_auth_failure(email)
+            _record_auth_attempt(email)
             flash("Bu e-posta zaten kayıtlı.", "error")
             return render_template("auth.html", mode="register")
         session.clear()
