@@ -1,4 +1,6 @@
 import requests
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 BASE_URL = "https://sportscore.com/api/v1/fixtures/"
 
@@ -26,6 +28,23 @@ class FootballProvider:
         if isinstance(value, dict):
             return value.get("name") or value.get("short_name") or fallback
         return value or fallback
+
+    @staticmethod
+    def local_kickoff(value):
+        if value in (None, ""):
+            return ""
+        if isinstance(value, (int, float)):
+            return str(value)
+        text = str(value).strip()
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            # Only convert timestamps that explicitly carry a timezone. Do not guess
+            # the timezone of provider values that are already naive/local.
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(ZoneInfo("Europe/Istanbul")).isoformat()
+        except (ValueError, TypeError):
+            pass
+        return text
 
     def fixtures(self, day):
         try:
@@ -85,7 +104,7 @@ class FootballProvider:
             output.append({
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
-                "kickoff": str(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
+                "kickoff": self.local_kickoff(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
                 "home_goals": hg, "away_goals": ag,
                 "ht_home": self.pick(item, "ht_home", "home_ht", default=self.pick(ht, "home", "home_score")),
                 "ht_away": self.pick(item, "ht_away", "away_ht", default=self.pick(ht, "away", "away_score"))
