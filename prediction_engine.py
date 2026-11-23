@@ -33,27 +33,56 @@ def _normalize_team(value):
     return " ".join(words)
 
 
-def _team_rows(rows, team):
-    target = _normalize_team(team)
-    found = []
-    for row in rows:
-        home_match = _normalize_team(row.get("home")) == target
-        away_match = _normalize_team(row.get("away")) == target
-        if home_match or away_match:
-            if row.get("home_goals") is not None and row.get("away_goals") is not None:
-                found.append(row)
-    return found[-RECENT_LIMIT:]
+class PreparedHistory:
+    """Pre-index completed matches once so each fixture prediction is fast."""
+    def __init__(self, rows):
+        self.rows = [
+            r for r in rows
+            if r.get("status") == "finished"
+            and r.get("home_goals") is not None and r.get("away_goals") is not None
+        ]
+        self.by_league = defaultdict(list)
+        self.by_team = defaultdict(list)
+        self.by_league_team = defaultdict(list)
+        for row in self.rows:
+            league = (row.get("league") or "").casefold()
+            home = _normalize_team(row.get("home"))
+            away = _normalize_team(row.get("away"))
+            self.by_league[league].append(row)
+            if home:
+                self.by_team[home].append(row)
+                self.by_league_team[(league, home)].append(row)
+            if away and away != home:
+                self.by_team[away].append(row)
+                self.by_league_team[(league, away)].append(row)
 
-def _rates(rows, team, venue=None):
-    selected = _team_rows(rows, team)
+    def team_rows(self, team, league_rows, match_id=None):
+        target = _normalize_team(team)
+        # The global index avoids normalizing every historical team name for
+        # every upcoming fixture. League rows are filtered by membership.
+        candidates = self.by_team.get(target, ())
+        allowed_ids = {id(row) for row in league_rows}
+        return [r for r in candidates if id(r) in allowed_ids and str(r.get("id")) != str(match_id)]
+
+
+def prepare_history(rows):
+    return rows if isinstance(rows, PreparedHistory) else PreparedHistory(rows)
+
+
+def _rates(selected, team, venue=None):
+    target = _normalize_team(team)
     if venue:
-        at_venue = [r for r in selected if (r.get("home") == team) == (venue == "home")]
-        # Venue split is useful when it has enough samples; otherwise use all recent form.
+        at_venue = [
+            r for r in selected
+            if (_normalize_team(r.get("home")) == target) == (venue == "home")
+        ]
+        # Use a venue split only when it has enough samples.
         if len(at_venue) >= 3:
             selected = at_venue
+    selected = selected[-RECENT_LIMIT:]
     gf, ga, ht_gf, ht_ga, sh_gf, sh_ga = [], [], [], [], [], []
     for r in selected:
-        is_home = r.get("home") == team
+        is_home = _normalize_team(r.get("home")) == target
         own = r.get("home_goals") if is_home else r.get("away_goals")
         opp = r.get("away_goals") if is_home else r.get("home_goals")
         own_ht = r.get("ht_home") if is_home else r.get("ht_away")
@@ -88,17 +117,23 @@ def _both_score_prob(x, y):
     return (1 - math.exp(-x)) * (1 - math.exp(-y))
 
 def predict(match, history):
-    valid = [
-        r for r in history
-        if r.get("status") == "finished"
-        and r.get("home_goals") is not None and r.get("away_goals") is not None
-        and str(r.get("id")) != str(match.get("id"))
-    ]
-    # Prefer same-competition history; do not mix unrelated leagues if enough data exists.
-    same_league = [r for r in valid if (r.get("league") or "").casefold() == (match.get("league") or "").casefold()]
-    league_rows = same_league if len(same_league) >= 12 else valid
-    home_all = _rates(league_rows, match["home"])
-    away_all = _rates(league_rows, match["away"])
+    indexed = prepare_history(history)
+    league = (match.get("league") or "").casefold()
+    same_league = indexed.by_league.get(league, ())
+    # Prefer same-competition history when at least 12 finished matches exist.
+    if len(same_league) >= 12:
+        league_rows = same_league
+        home_rows = indexed.by_league_team.get((league, _normalize_team(match["home"])), ())
+        away_rows = indexed.by_league_team.get((league, _normalize_team(match["away"])), ())
+    else:
+        league_rows = indexed.rows
+        home_rows = indexed.by_team.get(_normalize_team(match["home"]), ())
+        away_rows = indexed.by_team.get(_normalize_team(match["away"]), ())
+    match_id = match.get("id")
+    home_rows = [r for r in home_rows if str(r.get("id")) != str(match_id)]
+    away_rows = [r for r in away_rows if str(r.get("id")) != str(match_id)]
+    home_all = _rates(home_rows, match["home"])
+    away_all = _rates(away_rows, match["away"])
     if home_all["n"] < MIN_TEAM_MATCHES or away_all["n"] < MIN_TEAM_MATCHES:
         return None, (
             f"Tahmin için geçmiş veri yetersiz. Son {RECENT_LIMIT} maç içinde en az "
@@ -106,8 +141,8 @@ def predict(match, history):
             f"{match['home']}: {home_all['n']}, {match['away']}: {away_all['n']} maç."
         )
 
-    home_home = _rates(league_rows, match["home"], "home")
-    away_away = _rates(league_rows, match["away"], "away")
+    home_home = _rates(home_rows, match["home"], "home")
+    away_away = _rates(away_rows, match["away"], "away")
     avg_home = _mean([float(r["home_goals"]) for r in league_rows if r.get("home_goals") is not None], 1.4)
     avg_away = _mean([float(r["away_goals"]) for r in league_rows if r.get("away_goals") is not None], 1.1)
     # Blend venue-specific and overall recent form. Clamp extreme samples.
@@ -134,8 +169,8 @@ def predict(match, history):
 
     # Half-time and second-half markets are calculated only when both teams have
     # enough actual half-time scores in the imported history.
-    home_half = _rates(league_rows, match["home"], "home")
-    away_half = _rates(league_rows, match["away"], "away")
+    home_half = home_home
+    away_half = away_away
     if home_half["ht_n"] >= MIN_HALF_MATCHES and away_half["ht_n"] >= MIN_HALF_MATCHES:
         h1 = max(.08, .55 * home_half["ht_gf"] + .45 * away_half["ht_ga"])
         a1 = max(.08, .55 * away_half["ht_gf"] + .45 * home_half["ht_ga"])
