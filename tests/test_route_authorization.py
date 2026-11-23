@@ -10,6 +10,8 @@ class RouteAuthorizationTests(unittest.TestCase):
         os.environ.pop("ADMIN_EMAILS", None)
         app_module.app.config.update(TESTING=True)
         self.client = app_module.app.test_client()
+        with self.client.session_transaction() as session:
+            session["_csrf_token"] = "test-csrf-token"
 
     def tearDown(self):
         if self.previous_admin_emails is None:
@@ -29,8 +31,12 @@ class RouteAuthorizationTests(unittest.TestCase):
         ]
         for method, path in cases:
             with self.subTest(method=method, path=path):
-                response = self.client.open(path, method=method, json={} if path.endswith("/step") else None)
+                response = self.client.open(path, method=method, json={} if path.endswith("/step") else None, headers={"X-CSRF-Token": "test-csrf-token"})
                 self.assertEqual(response.status_code, 403)
+
+    def test_unsafe_request_without_csrf_token_is_rejected(self):
+        response = self.client.post("/auth/logout")
+        self.assertEqual(response.status_code, 400)
 
     def test_login_required_routes_redirect_anonymous_requests(self):
         for path in ("/saved", "/sync/history/status"):
