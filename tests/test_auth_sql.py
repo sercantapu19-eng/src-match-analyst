@@ -15,5 +15,40 @@ class AuthSqlCompatibilityTests(unittest.TestCase):
         conn.close()
 
 
+class LoginRateLimitTests(unittest.TestCase):
+    def test_login_is_throttled_after_ten_failed_attempts(self):
+        import os
+        import tempfile
+        import auth
+        from app import app
+
+        with tempfile.TemporaryDirectory() as directory:
+            previous_path = os.environ.get("DATABASE_PATH")
+            os.environ["DATABASE_PATH"] = os.path.join(directory, "auth-test.db")
+            try:
+                auth.init_auth_db()
+                client = app.test_client()
+                with client.session_transaction() as session:
+                    session["_csrf_token"] = "csrf-test"
+                for _ in range(10):
+                    response = client.post("/login", data={
+                        "email": "unknown@example.com",
+                        "password": "wrong-password",
+                        "csrf_token": "csrf-test",
+                    })
+                    self.assertEqual(response.status_code, 200)
+                blocked = client.post("/login", data={
+                    "email": "unknown@example.com",
+                    "password": "wrong-password",
+                    "csrf_token": "csrf-test",
+                })
+                self.assertEqual(blocked.status_code, 429)
+            finally:
+                if previous_path is None:
+                    os.environ.pop("DATABASE_PATH", None)
+                else:
+                    os.environ["DATABASE_PATH"] = previous_path
+
+
 if __name__ == "__main__":
     unittest.main()
