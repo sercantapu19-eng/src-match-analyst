@@ -420,31 +420,38 @@ def sync_fixtures():
 @app.post("/sync/live/refresh")
 def refresh_live_fixtures():
  payload=request.get_json(silent=True) or {}
- day=(request.form.get("date") or payload.get("date") or date.today().isoformat())
+ day=(request.form.get("date") or payload.get("date") or datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat())
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-  # The fixtures endpoint supplies scores/status but often omits the running
-  # clock. SportScore's dedicated widget feed includes status_text such as 67'.
+  # Dedicated SportScore widget feed contains the live clock (e.g. 67' / 45+2).
   live_fixtures=provider.live_matches(limit=50)
   def team_key(value):
    normalized=provider._normalize_search_name(value)
    return " ".join(sorted(normalized.split()))
   with db() as c:
+   # Include scheduled rows too: a match must be promoted to live when the
+   # provider confirms kickoff, not left in "time passed / verify" forever.
    rows=c.execute("""SELECT id,home,away,status_short,elapsed_minute,home_goals,away_goals
-    FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY kickoff""",(day,)).fetchall()
+    FROM matches WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live')
+    ORDER BY kickoff""",(day,)).fetchall()
    by_pair={(team_key(row["home"]),team_key(row["away"])):row for row in rows}
+   updated_ids=set()
    for fixture in live_fixtures:
+    if fixture.get("kickoff") and str(fixture["kickoff"])[:10] != day:
+     continue
     pair=(team_key(fixture["home"]),team_key(fixture["away"]))
     row=by_pair.get(pair)
     if not row:
      continue
     c.execute("""UPDATE matches SET status='live',status_short=?,
-      elapsed_minute=?,home_goals=COALESCE(?,home_goals),
-      away_goals=COALESCE(?,away_goals) WHERE id=?""",
-      (fixture.get("status_short") or "",fixture.get("elapsed_minute"),
+      elapsed_minute=COALESCE(?,elapsed_minute),
+      home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals)
+      WHERE id=?""",
+      (fixture.get("status_short") or "LIVE",fixture.get("elapsed_minute"),
        fixture.get("home_goals"),fixture.get("away_goals"),row["id"]))
+    updated_ids.add(row["id"])
    rows=c.execute("""SELECT id,status_short,elapsed_minute,home_goals,away_goals
-    FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY id""",(day,)).fetchall()
+    FROM matches WHERE substr(kickoff,1,10)=? AND status='live' ORDER BY kickoff""",(day,)).fetchall()
   result=[]
   for row in rows:
    code=str(row["status_short"] or "").upper()
@@ -458,10 +465,12 @@ def refresh_live_fixtures():
    elif code in ("2H","2ND_HALF"):
     label="Canlı · 2. Yarı"
    else:
-    label="Canlı"
+    label="Canlı · Dakika bilgisi bekleniyor"
    result.append({"id":row["id"],"minute_label":label,
+    "minute":minute,
     "score":f"{row['home_goals']} – {row['away_goals']}" if row["home_goals"] is not None and row["away_goals"] is not None else "—"})
-  return jsonify({"matches":result,"updated_at":datetime.utcnow().isoformat()})
+  return jsonify({"matches":result,"updated_at":datetime.now(ZoneInfo("Europe/Istanbul")).isoformat(),
+   "provider_confirmed_live":len(updated_ids)})
  except ProviderError as exc:
   return jsonify({"error":str(exc)}),502
  except Exception as exc:
