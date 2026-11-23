@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<h1>Kaydedilen maçlar</h1>{% for m in matches %}<section class="panel"><b>{{m.home}} – {{m.away}}</b><p>{{m.kickoff}} · {{m.league}}</p><p>{{m.htft}} · {{m.over25}} · KG {{m.btts}} · Korner {{m.corners}}</p><a href="/match/{{m.id}}">Detay →</a></section>{% else %}<p>Henüz kayıtlı maç yok.</p>{% endfor %}{% endblock %}
