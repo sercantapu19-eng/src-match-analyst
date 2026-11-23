@@ -76,5 +76,40 @@ class HistorySyncRouteTests(unittest.TestCase):
         second = self.client.post("/sync/history/start").get_json()
         self.assertEqual(first["job_id"], second["job_id"])
 
+    def test_live_refresh_updates_minute_and_score(self):
+        with application.db() as c:
+            c.execute(
+                """INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
+                   home_goals,away_goals,status_short,elapsed_minute)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ("Home FC", "Away FC", "Test League", "2026-11-23T12:00:00+03:00",
+                 "live", "test", "sportscore", "live-1", 1, 0, "1H", 12)
+            )
+
+        class FakeProvider:
+            def __init__(self, *args, **kwargs):
+                pass
+            def fixtures(self, day, status=None):
+                self_day = day
+                return [{
+                    "id": "live-1", "home": "Home FC", "away": "Away FC",
+                    "league": "Test League", "kickoff": "2026-11-23T12:00:00+03:00",
+                    "status": "live", "status_short": "1H", "elapsed_minute": 37,
+                    "home_goals": 2, "away_goals": 1
+                }]
+
+        with patch.object(application, "FootballProvider", FakeProvider):
+            response = self.client.get("/sync/live/refresh?date=2026-11-23")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["matches"][0]["minute_label"], "Canlı 37′")
+        self.assertEqual(payload["matches"][0]["score"], "2 – 1")
+        with application.db() as c:
+            saved = c.execute(
+                "SELECT elapsed_minute,home_goals,away_goals FROM matches WHERE external_id='live-1'"
+            ).fetchone()
+        self.assertEqual(tuple(saved), (37, 2, 1))
+
 if __name__ == "__main__":
     unittest.main()
