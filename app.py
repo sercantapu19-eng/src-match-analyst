@@ -41,14 +41,18 @@ init_db()
 @app.route("/")
 def index():
  day=request.args.get("date") or date.today().isoformat()
+ view=request.args.get("view","upcoming")
+ if view not in ("upcoming","completed"): view="upcoming"
+ status_filter="finished" if view=="completed" else "scheduled"
  with db() as c:
   ms=c.execute("""SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id
-   WHERE substr(m.kickoff,1,10)=? ORDER BY m.kickoff""",(day,)).fetchall()
+   WHERE substr(m.kickoff,1,10)=? AND m.status=? ORDER BY m.kickoff""",(day,status_filter)).fetchall()
   saved=c.execute("SELECT COUNT(*) FROM saved_matches").fetchone()[0]
   done=c.execute("SELECT COUNT(*) FROM matches WHERE status='finished'").fetchone()[0]
+  upcoming=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchone()[0]
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
-  provider_ready=provider_ready(),last_sync=last)
+  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming)
 
 @app.post("/sync/fixtures")
 def sync_fixtures():
