@@ -218,7 +218,7 @@ def login():
             user = _execute(conn, "SELECT id,email,password_hash FROM users WHERE email=?", (email,)).fetchone()
         password_valid = bool(user and len(password) <= 1024 and check_password_hash(user["password_hash"], password))
         if not password_valid:
-            _record_auth_failure(email)
+            _record_auth_attempt(email)
             flash("E-posta veya şifre hatalı.", "error")
             return render_template("auth.html", mode="login")
         _clear_auth_failures(email)
