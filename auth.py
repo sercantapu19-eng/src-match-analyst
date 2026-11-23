@@ -179,7 +179,7 @@ def register():
             flash("Geçerli bir e-posta adresi girin.", "error")
             return render_template("auth.html", mode="register")
         if len(password) < 10 or len(password) > 1024:
-            _record_auth_failure(email)
+            _record_auth_attempt(email)
             flash("Şifre 10 ile 1024 karakter arasında olmalı.", "error")
             return render_template("auth.html", mode="register")
         # Count successful registrations as attempts to limit account creation per IP.
