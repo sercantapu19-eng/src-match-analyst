@@ -59,8 +59,8 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(rows[0]["ht_home"], 1)
         self.assertEqual(rows[0]["ht_away"], 0)
         self.assertEqual(rows[1]["status"], "finished")
-        self.assertEqual(rows[1]["home_goals"], "3")
-        self.assertEqual(rows[1]["away_goals"], "2")
+        self.assertEqual(rows[1]["home_goals"], 3)
+        self.assertEqual(rows[1]["away_goals"], 2)
         self.assertEqual(rows[1]["ht_home"], 1)
         self.assertEqual(rows[1]["ht_away"], 1)
 
