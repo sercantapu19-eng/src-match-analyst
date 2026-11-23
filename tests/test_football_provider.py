@@ -109,6 +109,8 @@ class FootballProviderTests(unittest.TestCase):
         provider.session = fake
         self.assertEqual(provider.search_team_slug("Başakşehir"), "basaksehir")
         self.assertEqual(fake.params["q"], "Başakşehir")
+        self.assertEqual(provider._normalize_search_name("İstanbul Başakşehir Futbol Kulübü"), "basaksehir")
+        self.assertEqual(provider._normalize_search_name("Arca Çorum FK"), "arca corum")
 
 if __name__ == "__main__":
     unittest.main()
