@@ -27,7 +27,7 @@ def init_db():
   c.execute("""CREATE TABLE IF NOT EXISTS saved_matches(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL UNIQUE,saved_at TEXT NOT NULL,FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
   c.execute("""CREATE TABLE IF NOT EXISTS results(id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL,market TEXT NOT NULL,prediction TEXT NOT NULL,actual TEXT DEFAULT '',outcome TEXT DEFAULT 'pending',FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,UNIQUE(match_id,market))""")
   c.execute("""CREATE TABLE IF NOT EXISTS sync_log(id INTEGER PRIMARY KEY AUTOINCREMENT,provider TEXT,day TEXT,ran_at TEXT,fixtures_count INTEGER DEFAULT 0,status TEXT,message TEXT)""")
-  c.execute("""CREATE TABLE IF NOT EXISTS sync_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT,phase TEXT NOT NULL,status TEXT NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,current_date TEXT NOT NULL,total_days INTEGER NOT NULL,processed_days INTEGER DEFAULT 0,fixtures_count INTEGER DEFAULT 0,predictions_total INTEGER DEFAULT 0,predictions_processed INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,last_error TEXT DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)""")
+  c.execute("""CREATE TABLE IF NOT EXISTS sync_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT,phase TEXT NOT NULL,status TEXT NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,cursor_date TEXT NOT NULL,total_days INTEGER NOT NULL,processed_days INTEGER DEFAULT 0,fixtures_count INTEGER DEFAULT 0,predictions_total INTEGER DEFAULT 0,predictions_processed INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,last_error TEXT DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)""")
 
 def sync_prediction_rows(c,mid):
  m=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
@@ -181,7 +181,7 @@ def start_history_sync():
   active=c.execute("SELECT * FROM sync_jobs WHERE status='running' ORDER BY id DESC LIMIT 1").fetchone()
   if active:
    return jsonify(history_job_payload(active))
-  cur=c.execute("""INSERT INTO sync_jobs(phase,status,start_date,end_date,current_date,total_days,created_at,updated_at)
+  cur=c.execute("""INSERT INTO sync_jobs(phase,status,start_date,end_date,cursor_date,total_days,created_at,updated_at)
    VALUES('history','running',?,?,?,?,?,?)""",(start.isoformat(),end.isoformat(),start.isoformat(),(end-start).days+1,now,now))
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(cur.lastrowid,)).fetchone()
  return jsonify(history_job_payload(job))
@@ -204,7 +204,7 @@ def history_sync_step():
   if job["status"]!="running":return jsonify(history_job_payload(job))
   phase=job["phase"]
   if phase=="history":
-   day=job["current_date"]
+   day=job["cursor_date"]
    try:
     provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
     fixtures=provider.fixtures(day,status="finished")
@@ -217,7 +217,7 @@ def history_sync_step():
      final_status="completed" if pred_total==0 else "running"
     else:
      pred_total=job["predictions_total"]; next_phase="history"; final_status="running"
-    c.execute("""UPDATE sync_jobs SET phase=?,status=?,current_date=?,processed_days=?,fixtures_count=fixtures_count+?,
+    c.execute("""UPDATE sync_jobs SET phase=?,status=?,cursor_date=?,processed_days=?,fixtures_count=fixtures_count+?,
       predictions_total=?,attempts=0,last_error='',updated_at=? WHERE id=?""",
       (next_phase,final_status,next_day,processed,len(fixtures),pred_total,datetime.utcnow().isoformat(),job_id))
     if final_status=="completed":
