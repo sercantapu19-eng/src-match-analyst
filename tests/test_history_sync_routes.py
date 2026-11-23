@@ -16,6 +16,7 @@ class HistorySyncRouteTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
             session["user_email"] = "admin@example.com"
+            session["_csrf_token"] = "test-csrf-token"
 
     def tearDown(self):
         application.DB_PATH = self.old_db_path
@@ -26,7 +27,7 @@ class HistorySyncRouteTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_start_creates_resumable_history_job(self):
-        response = self.client.post("/sync/history/start")
+        response = self.client.post("/sync/history/start", headers={"X-CSRF-Token": "test-csrf-token"})
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["status"], "running")
@@ -61,7 +62,7 @@ class HistorySyncRouteTests(unittest.TestCase):
                 }]
 
         with patch.object(application, "FootballProvider", FakeProvider):
-            response = self.client.post("/sync/history/step", json={"job_id": job_id})
+            response = self.client.post("/sync/history/step", json={"job_id": job_id}, headers={"X-CSRF-Token": "test-csrf-token"})
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
