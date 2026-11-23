@@ -168,7 +168,10 @@ class FootballProvider:
         }))
         raw = unicodedata.normalize("NFKD", raw)
         raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
-        return " ".join(re.findall(r"[a-z0-9]+", raw))
+        words = re.findall(r"[a-z0-9]+", raw)
+        removable = {"fc", "afc", "cf", "sc", "fk", "sk", "club", "football",
+                     "futbol", "kulubu", "belediye", "belediyespor", "spor", "istanbul"}
+        return " ".join(word for word in words if word not in removable)
 
     def search_team_slug(self, team_name):
         """Resolve a club to a SportScore team slug; never guess an ambiguous result."""
@@ -265,7 +268,7 @@ class FootballProvider:
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
             if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT"):
                 state = "live"
-            elif any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT", "AET", "PEN", "FINISHED", "ENDED", "FULL_TIME", "FULLTIME"):
+            elif raw_status.strip() in ("ft", "aet", "pen", "finished", "ended") or any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT", "AET", "PEN", "FINISHED", "ENDED", "FULL_TIME", "FULLTIME"):
                 state = "finished"
             else:
                 state = "scheduled"
