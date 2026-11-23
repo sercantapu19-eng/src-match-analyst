@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 BASE_URL = "https://sportscore.com/api/v1/fixtures/"
 SEARCH_URL = "https://sportscore.com/api/v1/search/"
 TEAM_URL = "https://sportscore.com/api/widget/team/"
+LIVE_MATCHES_URL = "https://sportscore.com/api/widget/matches/"
 
 class ProviderError(Exception):
     pass
@@ -378,6 +379,31 @@ class FootballProvider:
                 "ht_home": score_int(ht_home), "ht_away": score_int(ht_away)
             })
         return output
+
+    def live_matches(self, limit=50):
+        """Fetch the dedicated SportScore live/recent feed, which carries status_text clocks."""
+        try:
+            response = self.session.get(
+                LIVE_MATCHES_URL,
+                params={"sport": "football", "limit": min(50, max(1, int(limit)))},
+                timeout=10,
+            )
+        except requests.RequestException as exc:
+            raise ProviderError(f"SportScore canlı maç bağlantı hatası: {exc}") from exc
+        if response.status_code == 429:
+            raise ProviderError("SportScore canlı maç istek sınırı doldu.")
+        if response.status_code in (401, 403):
+            raise ProviderError("SportScore canlı maç erişimi reddedildi.")
+        if not response.ok:
+            raise ProviderError(f"SportScore canlı maç HTTP {response.status_code}.")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ProviderError("SportScore canlı maç yanıtı geçerli JSON değil.") from exc
+        return [
+            fixture for fixture in self.parse_fixtures_payload(payload)
+            if fixture.get("status") == "live"
+        ]
 
     def team_fixtures_for_team(self, team_name, limit=30):
         """Fetch up to 30 recent/upcoming fixtures for one named club."""
