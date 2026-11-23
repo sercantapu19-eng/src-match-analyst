@@ -89,6 +89,41 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual([row["status"] for row in rows], ["live", "live", "live", "scheduled"])
         self.assertEqual(rows[2]["elapsed_minute"], 54)
 
+    def test_live_minute_is_parsed_from_sportscore_status_text_and_timer(self):
+        provider = FootballProvider()
+        rows = provider.parse_fixtures_payload({
+            "matches": [
+                {"slug": "match-37", "home": "Team A", "away": "Team B",
+                 "status": "live", "status_text": "37'", "home_score": 1, "away_score": 0},
+                {"slug": "match-45", "home": "Team C", "away": "Team D",
+                 "status": {"short": "2H", "elapsed_minutes": 63},
+                 "timer": {"elapsed": 63}, "home_score": 0, "away_score": 0},
+                {"slug": "match-added", "home": "Team E", "away": "Team F",
+                 "status": "live", "status_text": "45+2", "home_score": 0, "away_score": 0}
+            ]
+        })
+        self.assertEqual([row["elapsed_minute"] for row in rows], [37, 63, "45+2"])
+        self.assertEqual([row["status"] for row in rows], ["live", "live", "live"])
+
+    def test_fixtures_reads_status_text_clock_when_elapsed_field_is_missing(self):
+        provider = FootballProvider()
+        class ClockResponse:
+            status_code = 200
+            ok = True
+            text = ""
+            def json(self):
+                return {"fixtures": [{
+                    "id": 991, "home": "Team A", "away": "Team B",
+                    "status": "live", "status_text": "72'", "home_score": 2, "away_score": 1
+                }]}
+        class ClockSession:
+            def get(self, url, params, timeout):
+                return ClockResponse()
+        provider.session = ClockSession()
+        rows = provider.fixtures("2026-11-23", status="live")
+        self.assertEqual(rows[0]["elapsed_minute"], 72)
+        self.assertEqual(rows[0]["status"], "live")
+
     def test_compact_finished_status_codes_are_not_discarded(self):
         provider = FootballProvider()
         class CompactStatusResponse:
