@@ -616,6 +616,95 @@ def history_sync_step():
   job=c.execute("SELECT * FROM sync_jobs WHERE id=?",(job_id,)).fetchone()
  return jsonify(history_job_payload(job))
 
+
+@app.route("/coupon")
+def coupon_center():
+    """Filter real, stored pre-match probabilities; never fabricate bookmaker prices."""
+    market = request.args.get("market", "all")
+    try:
+        min_probability = max(0.0, min(100.0, float(request.args.get("min_probability", "70"))))
+        min_odds = max(1.01, float(request.args.get("min_odds", "1.40")))
+        max_odds = max(min_odds, min(1000.0, float(request.args.get("max_odds", "30"))))
+    except (TypeError, ValueError):
+        min_probability, min_odds, max_odds = 70.0, 1.40, 30.0
+    league_filter = request.args.get("league", "all")
+    risk = request.args.get("risk", "balanced")
+    if risk not in ("conservative", "balanced", "aggressive"):
+        risk = "balanced"
+    risk_floor = {"conservative": 80.0, "balanced": 70.0, "aggressive": 60.0}[risk]
+    effective_floor = max(min_probability, risk_floor)
+    market_labels = {
+        "match_result": "Maç Sonucu", "goals": "2,5 Gol", "btts": "KG Var/Yok",
+        "htft": "İY/MS", "first_half_btts": "1. Yarı KG",
+        "second_half_btts": "2. Yarı KG", "corners": "Korner"
+    }
+    with db() as c:
+        fixtures = c.execute("""SELECT * FROM matches
+            WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')
+            ORDER BY kickoff,id""").fetchall()
+        leagues = sorted({str(row["league"] or "").strip() for row in fixtures if str(row["league"] or "").strip()}, key=str.casefold)
+    ready, waiting, seen = [], [], set()
+    for match in fixtures:
+        identity = (str(match["home"]).strip().casefold(), str(match["away"]).strip().casefold(),
+                    str(match["league"] or "").strip().casefold(), str(match["kickoff"] or ""))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if league_filter != "all" and (match["league"] or "") != league_filter:
+            continue
+        try:
+            probabilities = json.loads(match["market_probabilities"] or "{}")
+        except (TypeError, ValueError):
+            probabilities = {}
+        selections = []
+        result = probabilities.get("match_result") or {}
+        for option, label, odd_key in (("1", "MS 1", "odds_home"), ("X", "MS X", "odds_draw"), ("2", "MS 2", "odds_away")):
+            if result.get(option) is not None:
+                selections.append(("match_result", label, result.get(option), match[odd_key]))
+        goals = (probabilities.get("goals") or {}).get("2.5") or {}
+        for option, label in (("over", "Üst 2,5"), ("under", "Alt 2,5")):
+            if goals.get(option) is not None:
+                selections.append(("goals", label, goals.get(option), None))
+        for option, label in (("Var", "KG Var"), ("Yok", "KG Yok")):
+            value = (probabilities.get("btts") or {}).get(option)
+            if value is not None:
+                selections.append(("btts", label, value, None))
+        for key, label in (("htft", "İY/MS"), ("first_half_btts", "1. Yarı KG"), ("second_half_btts", "2. Yarı KG")):
+            values = probabilities.get(key) or {}
+            if key == "htft":
+                for option, value in values.items():
+                    selections.append((key, option, value, None))
+            else:
+                for option, value in values.items():
+                    selections.append((key, label + " " + option, value, None))
+        for key, label, probability, raw_odds in selections:
+            if market != "all" and market != key:
+                continue
+            try:
+                probability = float(probability)
+            except (TypeError, ValueError):
+                continue
+            if probability < 0 or probability > 1 or probability * 100 < effective_floor:
+                continue
+            try:
+                odds = float(str(raw_odds).replace(",", ".")) if raw_odds not in (None, "") else None
+            except (TypeError, ValueError):
+                odds = None
+            row = {"id": match["id"], "home": match["home"], "away": match["away"],
+                   "league": match["league"] or "Lig belirtilmedi", "kickoff": match["kickoff"],
+                   "market": market_labels.get(key, key), "selection": label,
+                   "probability": round(probability * 100, 1), "odds": odds}
+            if odds is None:
+                waiting.append(row)
+            elif min_odds <= odds <= max_odds:
+                ready.append(row)
+    ready.sort(key=lambda row: (-row["probability"], row["kickoff"]))
+    waiting.sort(key=lambda row: (-row["probability"], row["kickoff"]))
+    return render_template("coupon.html", ready=ready, waiting=waiting, leagues=leagues,
+        filters={"market": market, "min_probability": min_probability, "min_odds": min_odds,
+                 "max_odds": max_odds, "league": league_filter, "risk": risk},
+        effective_floor=effective_floor)
+
 @app.route("/match/new",methods=["GET","POST"])
 @admin_required
 def new_match():
