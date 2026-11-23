@@ -76,6 +76,27 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertIn("Gamma FC", second_account_page)
         self.assertNotIn("Alpha FC", second_account_page)
 
+    def test_save_returns_to_match_and_detail_has_navigation_links(self):
+        self._login_as(self.user_one, "one@example.com")
+        response = self._save(self.match_one)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], f"/match/{self.match_one}")
+
+        detail = self.client.get(f"/match/{self.match_one}").get_data(as_text=True)
+        self.assertIn("Bültene dön", detail)
+        self.assertIn("Kaydedilen maçlar", detail)
+        self.assertIn("★ Kaydedildi", detail)
+
+    def test_saved_page_has_mobile_friendly_return_and_remove_actions(self):
+        self._login_as(self.user_one, "one@example.com")
+        self._save(self.match_one)
+        response = self.client.get("/saved")
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Bültene dön", page)
+        self.assertIn("Alpha FC", page)
+        self.assertIn("Listemden çıkar", page)
+
     def test_regular_user_does_not_see_admin_match_controls(self):
         self._login_as(self.user_one, "one@example.com")
         response = self.client.get(f"/match/{self.match_one}")
