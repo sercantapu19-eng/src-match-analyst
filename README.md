@@ -31,3 +31,14 @@ Connect this repository to Render, choose New > Blueprint, and use render.yaml. 
 
 ## Next stage
 Integrate a licensed football data provider, timestamped odds sources, team news, automated results and proper settlement logic.
+## Multi-user accounts (staged)
+
+- Email/password registration and login are available through `/register` and `/login`.
+- Passwords are stored as Werkzeug password hashes; plaintext passwords are never stored.
+- Saved matches are stored in `user_saved_matches` and scoped to the signed-in account. Existing global `saved_matches` rows are left untouched because they have no reliable owner.
+- Browsing match data remains public. Saving matches requires an account.
+- Fixture sync, historical sync, manual match creation, and result settlement require an administrator account.
+- Set Render environment variable `ADMIN_EMAILS` to a comma-separated list of administrator email addresses before using administrative controls. If it is unset, admin-only operations are denied.
+- Set a long random `SECRET_KEY`; do not use the development fallback in production.
+- Session cookies are HttpOnly and SameSite=Lax; Secure is enabled on Render/production.
+- This is an initial account foundation, not a complete public launch security review. Add CSRF protection, registration/login rate limiting, email verification, password reset, privacy/terms pages, and abuse monitoring before promoting the site publicly.
