@@ -380,6 +380,30 @@ class FootballProvider:
             })
         return output
 
+    @staticmethod
+    def is_current_live_fixture(fixture, now=None, max_age_hours=4):
+        """Reject stale/recent-feed rows; only a dated, currently live fixture qualifies."""
+        if not isinstance(fixture, dict) or fixture.get("status") != "live":
+            return False
+        code = str(fixture.get("status_short") or "").strip().upper()
+        if code in {"FT", "AET", "PEN", "FINISHED", "ENDED", "FULL_TIME", "FULLTIME",
+                    "CANC", "CANCELLED", "PST", "POSTPONED", "ABD", "ABANDONED", "WO"}:
+            return False
+        kickoff = str(fixture.get("kickoff") or "").strip()
+        if not kickoff:
+            return False
+        try:
+            parsed = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            current = now or datetime.now(timezone.utc)
+            if current.tzinfo is None:
+                current = current.replace(tzinfo=timezone.utc)
+            age_seconds = (current - parsed.astimezone(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return -30 * 60 <= age_seconds <= max_age_hours * 60 * 60
+
     def live_matches(self, limit=50):
         """Fetch the dedicated SportScore live/recent feed, which carries status_text clocks."""
         try:
@@ -402,7 +426,7 @@ class FootballProvider:
             raise ProviderError("SportScore canlı maç yanıtı geçerli JSON değil.") from exc
         return [
             fixture for fixture in self.parse_fixtures_payload(payload)
-            if fixture.get("status") == "live"
+            if self.is_current_live_fixture(fixture)
         ]
 
     def team_fixtures_for_team(self, team_name, limit=30):

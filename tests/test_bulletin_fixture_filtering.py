@@ -79,7 +79,7 @@ class BulletinFixtureFilteringTests(unittest.TestCase):
         self.assertEqual(count, 1)
 
     def test_identical_provider_rows_are_shown_once_but_not_deleted(self):
-        future = self.now + timedelta(hours=3)
+        future = self.now + timedelta(hours=1)
         self.add_match("Macau U15", "Guam U15", future)
         self.add_match("Macau U15", "Guam U15", future)
 

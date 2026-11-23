@@ -1,6 +1,8 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import app as application
 from unittest.mock import patch
 
@@ -88,12 +90,13 @@ class HistorySyncRouteTests(unittest.TestCase):
         self.assertEqual(first["job_id"], second["job_id"])
 
     def test_live_refresh_updates_minute_and_score(self):
+        kickoff = (datetime.now(ZoneInfo("Europe/Istanbul")) - timedelta(minutes=45)).isoformat()
         with application.db() as c:
             c.execute(
                 """INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
                    home_goals,away_goals,status_short,elapsed_minute)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                ("Home FC", "Away FC", "Test League", "2026-11-23T12:00:00+03:00",
+                ("Home FC", "Away FC", "Test League", kickoff,
                  "live", "test", "sportscore", "live-1", 1, 0, "1H", 12)
             )
 
@@ -106,7 +109,7 @@ class HistorySyncRouteTests(unittest.TestCase):
             def live_matches(self, limit=50):
                 return [{
                     "id": "live-1", "home": "Home FC", "away": "Away FC",
-                    "league": "Test League", "kickoff": "2026-11-23T12:00:00+03:00",
+                    "league": "Test League", "kickoff": kickoff,
                     "status": "live", "status_short": "1H", "elapsed_minute": 37,
                     "home_goals": 2, "away_goals": 1
                 }]
