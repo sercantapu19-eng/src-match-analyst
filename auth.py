@@ -88,7 +88,9 @@ def _auth_rate_limited(email):
 
 def _record_auth_failure(email):
     now = datetime.utcnow().isoformat()
+    prune_before = (datetime.utcnow() - timedelta(days=1)).isoformat()
     with _db() as conn:
+        _execute(conn, "DELETE FROM auth_attempts WHERE attempted_at<?", (prune_before,))
         for kind, value in (("email", email), ("ip", request.remote_addr or "unknown")):
             _execute(conn, "INSERT INTO auth_attempts(key_hash,attempted_at) VALUES(?,?)",
                      (_rate_key(kind, value), now))
@@ -168,16 +170,17 @@ def register():
             return render_template("auth.html", mode="register")
         with _db() as conn:
             existing = _execute(conn, "SELECT id FROM users WHERE email=?", (email,)).fetchone()
-            if existing:
-                _record_auth_failure(email)
-                flash("Bu e-posta zaten kayıtlı.", "error")
-                return render_template("auth.html", mode="register")
-            cur = _execute(conn, 
-                "INSERT INTO users(email,password_hash,created_at) VALUES(?,?,?) RETURNING id",
-                (email, generate_password_hash(password), datetime.utcnow().isoformat()),
-            )
-            user = cur.fetchone()
-            user_id = user["id"] if isinstance(user, dict) else user[0]
+            if not existing:
+                cur = _execute(conn,
+                    "INSERT INTO users(email,password_hash,created_at) VALUES(?,?,?) RETURNING id",
+                    (email, generate_password_hash(password), datetime.utcnow().isoformat()),
+                )
+                user = cur.fetchone()
+                user_id = user["id"] if isinstance(user, dict) else user[0]
+        if existing:
+            _record_auth_failure(email)
+            flash("Bu e-posta zaten kayıtlı.", "error")
+            return render_template("auth.html", mode="register")
         session.clear()
         session["user_id"] = user_id
         session["user_email"] = email
