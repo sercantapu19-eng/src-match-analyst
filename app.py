@@ -326,7 +326,7 @@ def index():
     SELECT m.*,s.id saved,
      ROW_NUMBER() OVER (
       PARTITION BY lower(trim(m.home)),lower(trim(m.away)),lower(trim(m.league)),m.kickoff
-      ORDER BY m.id
+      ORDER BY CASE WHEN s.id IS NOT NULL THEN 0 ELSE 1 END,m.id
      ) AS duplicate_rank
     FROM matches m
     LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=?
@@ -349,7 +349,12 @@ def index():
    FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
     AND datetime(kickoff) < datetime('now')
   ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
-  live_count=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='live'",(day,)).fetchone()[0]
+  live_count=c.execute("""SELECT COUNT(*) FROM (
+   SELECT ROW_NUMBER() OVER (
+    PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
+   ) AS duplicate_rank
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='live'
+  ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
