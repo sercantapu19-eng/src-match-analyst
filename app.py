@@ -20,6 +20,14 @@ def postgres_row_factory(cursor):
  columns=[item.name for item in cursor.description] if cursor.description else []
  return lambda values: HybridRow(columns, values)
 
+def translate_postgres_sql(query):
+ sql=query.replace("?", "%s")
+ if re.search(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", sql, flags=re.IGNORECASE):
+  sql=re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", sql, flags=re.IGNORECASE).rstrip().rstrip(";")
+  sql += " ON CONFLICT DO NOTHING"
+ sql=re.sub(r"datetime\(([^)]+)\)\s*>=\s*datetime\('now'\)", r"CAST(\1 AS timestamptz) >= NOW()", sql, flags=re.IGNORECASE)
+ return sql
+
 class PostgresConnection:
  def __init__(self, url):
   import psycopg
@@ -30,12 +38,7 @@ class PostgresConnection:
  def __exit__(self, exc_type, exc_value, traceback):
   return self._connection.__exit__(exc_type, exc_value, traceback)
  def execute(self, query, params=()):
-  sql=query.replace("?", "%s")
-  if re.search(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", sql, flags=re.IGNORECASE):
-   sql=re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", sql, flags=re.IGNORECASE).rstrip().rstrip(";")
-   sql += " ON CONFLICT DO NOTHING"
-  sql=re.sub(r"datetime\(([^)]+)\)\s*>=\s*datetime\('now'\)", r"CAST(\1 AS timestamptz) >= NOW()", sql, flags=re.IGNORECASE)
-  return self._connection.execute(sql, params)
+  return self._connection.execute(translate_postgres_sql(query), params)
 
 def db():
  database_url=os.environ.get("DATABASE_URL","").strip()
