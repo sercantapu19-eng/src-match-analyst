@@ -2,7 +2,7 @@
 <section class="panel auth-panel">
 <h1>{{ "Hesap oluştur" if mode == "register" else "Giriş yap" }}</h1>
 <p>{{ "Kaydettiğin maçlar hesabına özel tutulur." if mode == "register" else "Kaydettiğin maçlara erişmek için giriş yap." }}</p>
-<form method="post" class="auth-form">
+<form method="post" class="auth-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <label>E-posta<input type="email" name="email" autocomplete="email" required maxlength="254"></label>
 <label>Şifre<input type="password" name="password" autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}" required minlength="{{ 10 if mode == 'register' else 1 }}"></label>
 <button class="button" type="submit">{{ "Hesap oluştur" if mode == "register" else "Giriş yap" }}</button>
