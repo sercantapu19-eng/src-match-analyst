@@ -6,7 +6,11 @@ from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
 from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required
 
-app=Flask(__name__); app.secret_key=os.environ.get("SECRET_KEY","change-this-before-deploy")
+app=Flask(__name__)
+secret_key=os.environ.get("SECRET_KEY","").strip()
+if (os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production") and len(secret_key)<32:
+ raise RuntimeError("Production SECRET_KEY must be configured with at least 32 characters.")
+app.secret_key=secret_key or secrets.token_urlsafe(48)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production"))
 
 def csrf_token():
