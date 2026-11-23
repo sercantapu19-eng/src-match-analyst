@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: src-match-analyst
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    plan: free
+    disk:
+      name: src-match-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_PATH
+        value: /var/data/src_match_analyst.db
+      - key: SECRET_KEY
+        generateValue: true
