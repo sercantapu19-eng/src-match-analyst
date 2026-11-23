@@ -111,8 +111,14 @@ class FootballProvider:
                           "half_time", "halftime", "extra_time", "penalty_shootout")
             finished_words = ("finished", "complete", "ended", "full_time", "fulltime",
                               "match_over", "after_extra_time", "after_penalties")
-            elapsed_value = self.pick(item, "elapsed", "elapsed_minute", "minute", "match_minute",
-                                      default=self.pick(item.get("time", {}) if isinstance(item.get("time"), dict) else {}, "elapsed", "minute"))
+            time_obj = item.get("time") if isinstance(item.get("time"), dict) else {}
+            elapsed_value = self.pick(item, "elapsed", "elapsed_minute", "minute", "match_minute", "elapsed_time",
+                                      default=self.pick(time_obj, "elapsed", "elapsed_minute", "minute", "match_minute",
+                                      default=self.pick(status_obj if isinstance(status_obj, dict) else {}, "elapsed", "elapsed_minute", "minute")))
+            if isinstance(elapsed_value, dict):
+                minute = self.pick(elapsed_value, "elapsed", "minute", "value", "current")
+                extra = self.pick(elapsed_value, "extra", "added", "injury_time")
+                elapsed_value = f"{minute}+{extra}" if minute is not None and extra not in (None, "", 0, "0") else minute
             if any(word in normalized_status for word in live_words) or code in live_codes:
                 state = "live"
             # SportScore sometimes sends compact status text (FT/AET/PEN)
