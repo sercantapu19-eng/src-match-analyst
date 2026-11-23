@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 from functools import wraps
 
-from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 auth_bp = Blueprint("auth", __name__)
@@ -51,6 +51,17 @@ def init_auth_db():
 
 def current_user_id():
     return session.get("user_id")
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        email = (session.get("user_email") or "").casefold()
+        allowed = {item.strip().casefold() for item in os.environ.get("ADMIN_EMAILS", "").split(",") if item.strip()}
+        if not current_user_id() or not allowed or email not in allowed:
+            abort(403)
+        return view(*args, **kwargs)
+    return wrapped
 
 
 def login_required(view):
