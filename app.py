@@ -319,16 +319,23 @@ with db() as _index_db:
 
 @app.route("/")
 def index():
- # Render's host clock may be UTC; the bulletin date must follow Turkish local time.
  now_local=datetime.now(ZoneInfo("Europe/Istanbul"))
  day=request.args.get("date") or now_local.date().isoformat()
+ query=(request.args.get("q") or "").strip()[:100]
  view=request.args.get("view","upcoming")
  if view not in ("upcoming","unverified","live","completed"): view="upcoming"
  status_filter={"completed":"finished","live":"live","upcoming":"scheduled","unverified":"scheduled"}[view]
  time_filter="datetime(m.kickoff) >= datetime('now')" if view=="upcoming" else (
   "datetime(m.kickoff) < datetime('now')" if view=="unverified" else "1=1")
- # Duplicate provider rows are hidden at read time, not deleted. Keep the
- # oldest row as the canonical display row so saved links and history survive.
+ search_sql=""
+ params=[current_user_id() or 0,day,status_filter]
+ if query:
+  search_sql=" AND (lower(m.home) LIKE ? OR lower(m.away) LIKE ? OR lower(m.league) LIKE ?)"
+  pattern="%"+query.casefold()+"%"
+  params.extend([pattern,pattern,pattern])
+  date_filter="substr(m.kickoff,1,10)>=?" 
+ else:
+  date_filter="substr(m.kickoff,1,10)=?"
  with db() as c:
   uid=current_user_id() or 0
   ms=c.execute("""WITH ranked AS (
@@ -339,35 +346,52 @@ def index():
      ) AS duplicate_rank
     FROM matches m
     LEFT JOIN user_saved_matches s ON s.match_id=m.id AND s.user_id=?
-    WHERE substr(m.kickoff,1,10)=? AND m.status=? AND """+time_filter+"""
+    WHERE """+date_filter+""" AND m.status=? AND """+time_filter+search_sql+"""
    )
-   SELECT * FROM ranked WHERE duplicate_rank=1 ORDER BY kickoff""",(uid,day,status_filter)).fetchall()
+   SELECT * FROM ranked WHERE duplicate_rank=1 ORDER BY kickoff LIMIT 200""",tuple([uid,day,status_filter]+(params[3:] if query else []))).fetchall()
   saved=c.execute("SELECT COUNT(*) FROM user_saved_matches WHERE user_id=?",(uid,)).fetchone()[0]
   done=c.execute("SELECT COUNT(*) FROM matches WHERE status='finished'").fetchone()[0]
   upcoming=c.execute("""SELECT COUNT(*) FROM (
-   SELECT ROW_NUMBER() OVER (
-    PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
-   ) AS duplicate_rank
-   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
-    AND datetime(kickoff) >= datetime('now')
+   SELECT ROW_NUMBER() OVER (PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id) AS duplicate_rank
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled' AND datetime(kickoff)>=datetime('now')
   ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
   unverified=c.execute("""SELECT COUNT(*) FROM (
-   SELECT ROW_NUMBER() OVER (
-    PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
-   ) AS duplicate_rank
-   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
-    AND datetime(kickoff) < datetime('now')
+   SELECT ROW_NUMBER() OVER (PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id) AS duplicate_rank
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled' AND datetime(kickoff)<datetime('now')
   ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
   live_count=c.execute("""SELECT COUNT(*) FROM (
-   SELECT ROW_NUMBER() OVER (
-    PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
-   ) AS duplicate_rank
+   SELECT ROW_NUMBER() OVER (PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id) AS duplicate_rank
    FROM matches WHERE substr(kickoff,1,10)=? AND status='live'
   ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
+  recommendation_rows=c.execute("""SELECT * FROM matches
+   WHERE status='scheduled' AND substr(kickoff,1,10)>=? AND COALESCE(market_probabilities,'{}') NOT IN ('','{}')
+   AND COALESCE(prediction_message,'')='' ORDER BY kickoff LIMIT 500""",(now_local.date().isoformat(),)).fetchall()
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
+ recommendations=[]
+ for row in recommendation_rows:
+  try:
+   confidence=json.loads(row["prediction_confidence"] or "{}")
+   probabilities=json.loads(row["market_probabilities"] or "{}")
+  except (TypeError,ValueError):
+   continue
+  valid=[]
+  for market,label in (("match_result","Maç sonucu"),("over25","2,5 gol"),("btts","KG")):
+   value=confidence.get(market)
+   if isinstance(value,(int,float)) and 0<=value<=100:
+    prediction=row[market] if market in row.keys() else ""
+    if prediction:
+     valid.append((float(value),label,str(prediction)))
+  if not valid:
+   continue
+  best=max(valid,key=lambda item:item[0])
+  recommendations.append({"id":row["id"],"home":row["home"],"away":row["away"],
+   "league":row["league"],"kickoff":row["kickoff"],"market":best[1],
+   "prediction":best[2],"confidence":round(best[0])})
+ recommendations.sort(key=lambda item:(-item["confidence"],item["kickoff"]))
+ recommendations=recommendations[:10]
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
-  unverified_count=unverified,live_count=live_count)
+  unverified_count=unverified,live_count=live_count,query=query,recommendations=recommendations)
 
 @app.post("/sync/fixtures")
 @admin_required

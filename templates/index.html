@@ -55,6 +55,37 @@
 })();
 </script>
 {% endif %}
+<section class="panel bulletin-tools">
+ <form method="get" action="/" class="match-search">
+  <input type="hidden" name="date" value="{{day}}">
+  <input type="hidden" name="view" value="{{view}}">
+  <label for="matchSearch">🔎 Maç ara</label>
+  <div class="match-search-row">
+   <input id="matchSearch" type="search" name="q" value="{{query}}" placeholder="Takım veya lig adı yaz…">
+   <button class="button" type="submit">Ara</button>
+   {% if query %}<a class="button secondary" href="/?date={{day}}&view={{view}}">Temizle</a>{% endif %}
+  </div>
+ </form>
+</section>
+{% if not query and recommendations %}
+<section class="panel recommended-matches">
+ <div class="recommended-heading"><div><span class="eyebrow">SRC MODEL ANALİZİ</span><h2>⭐ Tavsiye edilen 10 maç</h2><p>Yalnızca geçmiş verisi yeterli olan ve tahmini kayıtlı maçlar arasından sıralanır.</p></div><span class="recommendation-count">{{recommendations|length}} / 10</span></div>
+ <div class="recommendation-grid">
+ {% for item in recommendations %}
+  <article class="recommendation-card">
+   <div class="recommendation-top"><span>{{item.kickoff[11:16] if item.kickoff and item.kickoff|length>15 else item.kickoff}}</span><strong>%{{item.confidence}}</strong></div>
+   <b>{{item.home}} – {{item.away}}</b>
+   <small>{{item.league or "Lig belirtilmedi"}}</small>
+   <div class="recommendation-pick"><span>{{item.market}}</span><b>{{item.prediction}}</b></div>
+   <a href="/match/{{item.id}}">Maç analizini aç →</a>
+  </article>
+ {% endfor %}
+ </div>
+ <small class="recommendation-disclaimer">Olasılık model tahminidir, garanti veya bahis oranı değildir. Yüzde yalnızca modelin kendi güven değeridir.</small>
+</section>
+{% elif not query %}
+<section class="panel"><b>Tavsiye edilen maçlar henüz oluşturulamadı.</b><p>Yeterli geçmiş verisi ve tahmin kaydı bulunan maçlar geldikçe bu alan otomatik dolar. Eksik verili maçlar listeye alınmaz.</p></section>
+{% endif %}
 <nav class="bulletin-tabs"><a class="{{'active' if view=='upcoming' else ''}}" href="/?date={{day}}&view=upcoming">Oynanmamış maçlar <span>{{upcoming_count}}</span></a><a class="{{'active' if view=='unverified' else ''}}" href="/?date={{day}}&view=unverified">Saati geçti · doğrulanacak <span>{{unverified_count}}</span></a><a class="{{'active' if view=='live' else ''}}" href="/?date={{day}}&view=live">Canlı maçlar <span>{{live_count}}</span></a><a class="{{'active' if view=='completed' else ''}}" href="/?date={{day}}&view=completed">Tamamlananlar</a></nav>
 {% if not matches %}<section class="empty"><h2>{% if view=='completed' %}Bu tarihte tamamlanan maç yok{% elif view=='live' %}Şu anda canlı maç bulunamadı{% elif view=='unverified' %}Saati geçmiş, durumu doğrulanacak maç yok{% else %}Oynanmamış maç bulunamadı{% endif %}</h2><p>SportScore üzerinden seçilen tarihin maçlarını otomatik getirebilirsin.</p></section>{% else %}<div class="table-wrap"><table><tr><th>Saat</th><th>Maç</th><th>Lig</th><th>Durum</th><th>Skor</th><th></th></tr>{% for m in matches %}<tr data-match-id="{{m.id}}"><td>{{m.kickoff[11:16] if m.kickoff and m.kickoff|length>15 else m.kickoff}}</td><td><b>{{m.home}} – {{m.away}}</b></td><td>{{m.league or "—"}}</td><td data-status-cell>{% if m.status=="finished" %}Tamamlandı{% elif m.status=="live" %}{% if m.status_short in ("HT","INT","BREAK","BT") %}Devre Arası{% elif m.elapsed_minute is not none and m.elapsed_minute|string|length %}Canlı {{m.elapsed_minute}}′{% elif m.status_short in ("1H","1ST_HALF") %}Canlı · 1. Yarı{% elif m.status_short in ("2H","2ND_HALF") %}Canlı · 2. Yarı{% else %}Canlı{% endif %}{% elif view=='unverified' %}Saati geçti · Durumu doğrulanacak{% else %}Başlamadı{% endif %}</td><td data-score-cell>{% if m.home_goals is not none %}{{m.home_goals}} – {{m.away_goals}}{% else %}—{% endif %}</td><td><a href="/match/{{m.id}}">Detay →</a></td></tr>{% endfor %}</table></div>{% endif %}
 {% if view == "live" %}

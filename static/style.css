@@ -147,3 +147,34 @@ footer a{color:var(--src-blue)}
  .table-wrap table tr[data-match-id] td{font-size:13px}
  .table-wrap table tr[data-match-id] td:nth-child(2){font-size:15px}
 }
+
+
+/* Bulletin search and model-recommended top ten */
+.bulletin-tools{margin-top:16px}
+.match-search label{display:block;font-weight:750;margin-bottom:9px;color:#263241}
+.match-search-row{display:flex;gap:9px;align-items:center}
+.match-search-row input{flex:1;min-width:0;padding:13px 14px;border:1px solid #cbd4df;border-radius:9px;background:#fff;color:#202833;font:inherit}
+.match-search-row input:focus{outline:2px solid rgba(215,25,32,.18);border-color:#d71920}
+.match-search-row .button{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;min-height:46px}
+.recommended-matches{margin-top:16px}
+.recommended-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}
+.recommended-heading h2{margin:5px 0}
+.recommended-heading p{margin:5px 0;color:#687586;font-size:14px}
+.recommendation-count{flex:0 0 auto;border-radius:20px;background:#fff0f0;color:#b9141a;padding:6px 11px;font-weight:750}
+.recommendation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.recommendation-card{min-width:0;border:1px solid #e3e8ef;border-radius:11px;padding:13px;background:#fff;display:flex;flex-direction:column;gap:8px}
+.recommendation-top{display:flex;justify-content:space-between;align-items:center;color:#687586;font-size:13px}
+.recommendation-top strong{color:#16834a;background:#eaf7ef;padding:4px 8px;border-radius:7px}
+.recommendation-card>b{font-size:16px;line-height:1.35;overflow-wrap:anywhere;color:#202833}
+.recommendation-card>small{color:#687586}
+.recommendation-pick{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:9px;background:#f5f7fa;border-radius:8px;font-size:13px}
+.recommendation-pick b{color:#174a7e;text-align:right}
+.recommendation-card>a{color:#d71920;text-decoration:none;font-weight:700;font-size:13px;margin-top:auto}
+.recommendation-disclaimer{display:block;margin-top:13px;line-height:1.5}
+@media(max-width:600px){
+ .match-search-row{display:grid;grid-template-columns:minmax(0,1fr) auto}
+ .match-search-row input{grid-column:1/-1;width:100%}
+ .match-search-row .button{min-width:0}
+ .recommendation-grid{grid-template-columns:1fr}
+ .recommended-heading{align-items:center}
+}
