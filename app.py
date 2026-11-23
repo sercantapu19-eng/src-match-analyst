@@ -18,7 +18,7 @@ def init_db():
    odds_away TEXT DEFAULT '',htft TEXT DEFAULT '',over25 TEXT DEFAULT '',btts TEXT DEFAULT '',
    first_half_btts TEXT DEFAULT '',second_half_btts TEXT DEFAULT '',corners TEXT DEFAULT '',
    notes TEXT DEFAULT '',created_at TEXT NOT NULL,provider TEXT DEFAULT '',external_id TEXT DEFAULT '',
-   home_goals INTEGER,away_goals INTEGER,ht_home INTEGER,ht_away INTEGER,status_short TEXT DEFAULT '')""")
+   home_goals INTEGER,away_goals INTEGER,ht_home INTEGER,ht_away INTEGER,status_short TEXT DEFAULT '',elapsed_minute INTEGER)""")
   cols={r[1] for r in c.execute("PRAGMA table_info(matches)").fetchall()}
   for name,typ in [("provider","TEXT DEFAULT ''"),("external_id","TEXT DEFAULT ''"),("home_goals","INTEGER"),("away_goals","INTEGER"),("ht_home","INTEGER"),("ht_away","INTEGER"),("status_short","TEXT DEFAULT ''")]:
    if name not in cols: c.execute(f"ALTER TABLE matches ADD COLUMN {name} {typ}")
@@ -64,14 +64,14 @@ def sync_fixtures():
   with db() as c:
    for f in fixtures:
     c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
-      home_goals,away_goals,ht_home,ht_away,status_short)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+      home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
       home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
       status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
-      ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short""",
+      ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,elapsed_minute=excluded.elapsed_minute""",
       (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
-       "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"]))
+       "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"],f.get("elapsed_minute")))
    c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
     ("sportscore",day,datetime.utcnow().isoformat(),len(fixtures),"success","SportScore fikstür senkronizasyonu tamamlandı"))
   flash(f"{len(fixtures)} maç otomatik olarak içe aktarıldı/güncellendi.","success")
