@@ -212,7 +212,7 @@ def history_sync_step():
     next_day=(date.fromisoformat(day)+timedelta(days=1)).isoformat()
     processed=job["processed_days"]+1
     if next_day>job["end_date"]:
-     pred_total=c.execute("SELECT COUNT(*) FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')")).fetchone()[0]
+     pred_total=c.execute("SELECT COUNT(*) FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')").fetchone()[0]
      next_phase="predictions"
      final_status="completed" if pred_total==0 else "running"
     else:
