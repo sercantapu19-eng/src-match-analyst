@@ -273,7 +273,7 @@ def history_sync_step():
       fetched_count=fetched_count+?,skipped_count=skipped_count+?,predictions_total=?,
       last_error=?,updated_at=? WHERE id=?""",
       (next_phase,"running" if next_phase!="completed" else "completed",next_index,
-       stats["stored"],stats["fetched"],team_skipped,error_note,datetime.utcnow().isoformat(),job_id))
+       stats["stored"],stats["fetched"],team_skipped,pred_total,error_note,datetime.utcnow().isoformat(),job_id))
     if next_phase=="completed":
      c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
       ("sportscore",date.today().isoformat(),datetime.utcnow().isoformat(),job["fixtures_count"]+stats["stored"],"success",
