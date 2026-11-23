@@ -21,6 +21,7 @@ class HistorySyncRouteTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["status"], "running")
         self.assertEqual(payload["phase"], "history")
+        self.assertEqual(payload["teams_total"], 0)
         self.assertEqual(payload["total_days"], 180)
         self.assertIsNotNone(payload["job_id"])
 
