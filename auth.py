@@ -86,7 +86,7 @@ def _auth_rate_limited(email):
     return False
 
 
-def _record_auth_failure(email):
+def _record_auth_attempt(email):
     now = datetime.utcnow().isoformat()
     prune_before = (datetime.utcnow() - timedelta(days=1)).isoformat()
     with _db() as conn:
@@ -128,12 +128,26 @@ def current_user_id():
     return session.get("user_id")
 
 
+def is_admin_user():
+    user_id = current_user_id()
+    if user_id is None:
+        return False
+    try:
+        user_id = int(user_id)
+        allowed = {
+            int(item.strip())
+            for item in os.environ.get("ADMIN_USER_IDS", "").split(",")
+            if item.strip().isdigit()
+        }
+    except (TypeError, ValueError):
+        return False
+    return user_id in allowed
+
+
 def admin_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        email = (session.get("user_email") or "").casefold()
-        allowed = {item.strip().casefold() for item in os.environ.get("ADMIN_EMAILS", "").split(",") if item.strip()}
-        if not current_user_id() or not allowed or email not in allowed:
+        if not is_admin_user():
             abort(403)
         return view(*args, **kwargs)
     return wrapped
@@ -161,13 +175,15 @@ def register():
         local, separator, domain = email.partition("@")
         valid_email = bool(separator and local and domain and "." in domain and not any(ch.isspace() for ch in email))
         if len(email) > 254 or not valid_email:
-            _record_auth_failure(email)
+            _record_auth_attempt(email)
             flash("Geçerli bir e-posta adresi girin.", "error")
             return render_template("auth.html", mode="register")
         if len(password) < 10 or len(password) > 1024:
             _record_auth_failure(email)
             flash("Şifre 10 ile 1024 karakter arasında olmalı.", "error")
             return render_template("auth.html", mode="register")
+        # Count successful registrations as attempts to limit account creation per IP.
+        _record_auth_attempt(email)
         with _db() as conn:
             existing = _execute(conn, "SELECT id FROM users WHERE email=?", (email,)).fetchone()
             if not existing:
