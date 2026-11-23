@@ -1,1 +1,14 @@
-{% extends "base.html" %}{% block content %}<h1>Kaydedilen maçlar</h1>{% for m in matches %}<section class="panel"><b>{{m.home}} – {{m.away}}</b><p>{{m.kickoff}} · {{m.league}}</p><p>{{m.htft}} · {{m.over25}} · KG {{m.btts}} · Korner {{m.corners}}</p><a href="/match/{{m.id}}">Detay →</a></section>{% else %}<p>Henüz kayıtlı maç yok.</p>{% endfor %}{% endblock %}
+{% extends "base.html" %}{% block content %}
+<nav class="detail-actions"><a class="button secondary" href="/">← Bültene dön</a></nav>
+<section class="hero saved-hero"><div><div class="eyebrow">SRC MATCH ANALYST · KİŞİSEL LİSTEN</div><h1>Kaydedilen maçlar</h1><p>Yalnızca bu hesapta kaydettiğin maçlar görünür.</p></div><div class="stats"><div><b>{{matches|length}}</b><small>Kayıtlı maç</small></div></div></section>
+{% for m in matches %}
+<section class="panel saved-match">
+ <h2>{{m.home}} – {{m.away}}</h2>
+ <p>{{m.kickoff}} · {{m.league}}</p>
+ <p>{{m.htft or "İY/MS tahmini yok"}} · {{m.over25 or "2,5 gol tahmini yok"}} · KG {{m.btts or "—"}} · Korner {{m.corners or "—"}}</p>
+ <div class="detail-actions"><a class="button" href="/match/{{m.id}}">Maç analizini aç →</a><form method="post" action="/match/{{m.id}}/unsave"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="button secondary" type="submit">Listemden çıkar</button></form></div>
+</section>
+{% else %}
+<section class="empty"><h2>Henüz kayıtlı maç yok</h2><p>Bültende bir maçı açıp “Seçimlerime kaydet” düğmesine bas. Burada hemen görebilirsin.</p><a class="button" href="/">Maç bültenine git</a></section>
+{% endfor %}
+{% endblock %}
