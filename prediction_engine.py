@@ -44,6 +44,7 @@ class PreparedHistory:
         self.by_league = defaultdict(list)
         self.by_team = defaultdict(list)
         self.by_league_team = defaultdict(list)
+        self.goal_averages = {}
         for row in self.rows:
             league = (row.get("league") or "").casefold()
             home = _normalize_team(row.get("home"))
@@ -143,8 +144,7 @@ def predict(match, history):
 
     home_home = _rates(home_rows, match["home"], "home")
     away_away = _rates(away_rows, match["away"], "away")
-    avg_home = _mean([float(r["home_goals"]) for r in league_rows if r.get("home_goals") is not None], 1.4)
-    avg_away = _mean([float(r["away_goals"]) for r in league_rows if r.get("away_goals") is not None], 1.1)
+    avg_home, avg_away = indexed.goal_averages.get(league if len(same_league) >= 12 else "", (1.4, 1.1))
     # Blend venue-specific and overall recent form. Clamp extreme samples.
     home_attack = .65 * home_home["gf"] + .35 * home_all["gf"]
     away_defence = .65 * away_away["ga"] + .35 * away_all["ga"]
