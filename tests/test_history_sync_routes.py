@@ -25,6 +25,12 @@ class HistorySyncRouteTests(unittest.TestCase):
         self.assertEqual(payload["total_days"], 180)
         self.assertIsNotNone(payload["job_id"])
 
+    def test_status_endpoint_restores_last_job(self):
+        started = self.client.post("/sync/history/start").get_json()
+        restored = self.client.get("/sync/history/status").get_json()
+        self.assertEqual(restored["job_id"], started["job_id"])
+        self.assertEqual(restored["phase"], "history")
+
     def test_second_start_reuses_active_job(self):
         first = self.client.post("/sync/history/start").get_json()
         second = self.client.post("/sync/history/start").get_json()
