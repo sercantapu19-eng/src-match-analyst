@@ -164,7 +164,7 @@ class FootballProvider:
                 raw_status = str(self.pick(status_obj, "long", "name", "label", "description", "status", "type", default="")).lower()
                 code = str(self.pick(status_obj, "short", "code", "status_code", default=self.pick(item, "status_short", "status_code", "period", default=""))).upper()
             else:
-                raw_status = str(self.pick(item, "status_text", "state", default=status_obj)).lower()
+                raw_status = str(status_obj if status_obj not in (None, "") else self.pick(item, "status_text", "state", default="upcoming")).lower()
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
             normalized_status = raw_status.strip().replace("-", "_").replace(" ", "_")
             live_codes = {"1H", "HT", "2H", "ET", "P", "LIVE", "INT", "INPLAY", "IN_PLAY",
@@ -345,7 +345,7 @@ class FootballProvider:
                 raw_status = str(self.pick(status_obj, "long", "name", "label", "description", "status", "type", default="")).lower()
                 code = str(self.pick(status_obj, "short", "code", "status_code", default=self.pick(item, "status_short", "status_code", "period", default=""))).upper()
             else:
-                raw_status = str(self.pick(item, "status_text", "state", default=status_obj)).lower()
+                raw_status = str(status_obj if status_obj not in (None, "") else self.pick(item, "status_text", "state", default="upcoming")).lower()
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
             elapsed_value = self.elapsed_minute(item)
             if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT") or elapsed_value is not None:
