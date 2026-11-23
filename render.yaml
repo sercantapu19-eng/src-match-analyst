@@ -12,5 +12,7 @@ services:
     envVars:
       - key: DATABASE_PATH
         value: /var/data/src_match_analyst.db
+      - key: DATABASE_URL
+        sync: false
       - key: SECRET_KEY
         generateValue: true
