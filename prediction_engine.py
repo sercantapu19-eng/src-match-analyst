@@ -25,12 +25,53 @@ def _matrix(home_xg, away_xg):
     return [[hp[h] * ap[a] for a in range(MAX_GOALS + 1)] for h in range(MAX_GOALS + 1)]
 
 def _normalize_team(value):
-    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    """Return a stable identity key for common provider/Mackolik club-name variants."""
+    raw = str(value or "").casefold().translate(str.maketrans({
+        "ı": "i", "ç": "c", "ğ": "g", "ö": "o", "ş": "s", "ü": "u"
+    }))
+    text = unicodedata.normalize("NFKD", raw)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = re.sub(r"[^a-z0-9]+", " ", text)
-    removable = {"fc", "afc", "cf", "sc", "fk", "sk", "ks", "club", "football", "soccer", "kulubu", "spor"}
-    words = [word for word in text.split() if word not in removable]
-    return " ".join(words)
+    text = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    words = text.split()
+
+    # Competition feeds frequently alternate between short names and formal
+    # club names. These are identity aliases, not fuzzy substring matches.
+    compact = " ".join(words)
+    known_aliases = {
+        "basaksehir": {
+            "basaksehir", "istanbul basaksehir", "basaksehir futbol kulubu",
+            "basaksehir fk", "istanbul basaksehir fk", "basaksehir futbol",
+        },
+        "corum": {
+            "corum", "corum fk", "arca corum fk", "arca corum",
+            "corum belediyespor", "corum belediye spor", "corum belediye",
+            "corum futbol kulubu",
+        },
+    }
+    for canonical, aliases in known_aliases.items():
+        if compact in aliases:
+            return canonical
+
+    removable = {
+        "fc", "afc", "cf", "sc", "fk", "sk", "ks", "club", "football",
+        "soccer", "futbol", "kulubu", "belediye", "belediyespor", "spor",
+    }
+    return " ".join(word for word in words if word not in removable)
+
+
+def _team_history(indexed, team, league, match_id=None):
+    """Prefer same-league rows, but never let a league-label mismatch hide history."""
+    key = _normalize_team(team)
+    league_key = (league or "").casefold()
+    league_rows = indexed.by_league_team.get((league_key, key), ())
+    if len(league_rows) >= MIN_TEAM_MATCHES:
+        candidates = league_rows
+    else:
+        candidates = indexed.by_team.get(key, ())
+    return [
+        row for row in candidates
+        if str(row.get("id")) != str(match_id)
+    ]
 
 
 class PreparedHistory:
@@ -121,18 +162,11 @@ def predict(match, history):
     indexed = prepare_history(history)
     league = (match.get("league") or "").casefold()
     same_league = indexed.by_league.get(league, ())
-    # Prefer same-competition history when at least 12 finished matches exist.
-    if len(same_league) >= 12:
-        league_rows = same_league
-        home_rows = indexed.by_league_team.get((league, _normalize_team(match["home"])), ())
-        away_rows = indexed.by_league_team.get((league, _normalize_team(match["away"])), ())
-    else:
-        league_rows = indexed.rows
-        home_rows = indexed.by_team.get(_normalize_team(match["home"]), ())
-        away_rows = indexed.by_team.get(_normalize_team(match["away"]), ())
+    # A league can contain many matches while a particular club has no rows
+    # under that exact provider league label. Fall back per team, not per league.
     match_id = match.get("id")
-    home_rows = [r for r in home_rows if str(r.get("id")) != str(match_id)]
-    away_rows = [r for r in away_rows if str(r.get("id")) != str(match_id)]
+    home_rows = _team_history(indexed, match["home"], league, match_id)
+    away_rows = _team_history(indexed, match["away"], league, match_id)
     home_all = _rates(home_rows, match["home"])
     away_all = _rates(away_rows, match["away"])
     if home_all["n"] < MIN_TEAM_MATCHES or away_all["n"] < MIN_TEAM_MATCHES:
