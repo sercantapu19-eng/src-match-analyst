@@ -147,3 +147,14 @@ footer a{color:var(--src-blue)}
  .table-wrap table tr[data-match-id] td{font-size:13px}
  .table-wrap table tr[data-match-id] td:nth-child(2){font-size:15px}
 }
+
+
+/* Select coupon-center matches for the personal saved list */
+.coupon-save-form{margin-top:10px}
+.coupon-match-check{width:20px;height:20px;accent-color:var(--src-red);cursor:pointer}
+.coupon-save-button{margin:12px 0 4px;min-height:44px}
+.coupon-table td:first-child,.coupon-table th:first-child{width:48px;text-align:center}
+@media(max-width:700px){
+ .coupon-match-check{width:22px;height:22px}
+ .coupon-save-button{width:100%}
+}
