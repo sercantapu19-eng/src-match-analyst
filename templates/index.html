@@ -1,6 +1,41 @@
 {% extends "base.html" %}{% block content %}
 <section class="hero"><div><div class="eyebrow">SRC MATCH ANALYST · BÜLTEN</div><h1>Günün maçları</h1><p>Oynanmamış, canlı ve tamamlanan maçları takip et.</p></div><div class="stats"><div><b>{{upcoming_count}}</b><small>Oynanmamış</small></div><div><b>{{live_count}}</b><small>Canlı</small></div><div><b>{{done_count}}</b><small>Toplam tamamlanan</small></div><div><b>{{saved_count}}</b><small>Seçimlerim</small></div></div></section>
-<section class="panel sync-panel"><div><h2>Fikstür senkronizasyonu</h2><p class="status-ok">SportScore veri bağlantısı hazır. Ücretsiz genel erişim desteklenir.</p>{% if last_sync %}<small>Son işlem: {{last_sync.ran_at}} · {{last_sync.status}} · {{last_sync.message}}</small>{% else %}<small>Henüz senkronizasyon yapılmadı.</small>{% endif %}</div><form method="post" action="/sync/fixtures" class="sync-form"><input type="date" name="date" value="{{day}}"><button class="button">↻ Maçları otomatik getir</button></form></section>
+<section class="panel sync-panel"><div><h2>Fikstür senkronizasyonu</h2><p class="status-ok">SportScore veri bağlantısı hazır. Ücretsiz genel erişim desteklenir.</p>{% if last_sync %}<small>Son işlem: {{last_sync.ran_at}} · {{last_sync.status}} · {{last_sync.message}}</small>{% else %}<small>Henüz senkronizasyon yapılmadı.</small>{% endif %}</div><form method="post" action="/sync/fixtures" class="sync-form"><input type="date" name="date" value="{{day}}"><button class="button">↻ Seçili günün maçlarını getir</button></form></section>
+<section class="panel history-sync">
+ <div><h2>🌍 Tüm ligler için geçmiş veri ve tahmin altyapısı</h2><p>SportScore'un sunduğu liglerde son 180 günün tamamlanmış maçları parça parça alınır; ardından listedeki tüm yaklaşan maçların tahminleri yenilenir.</p><button class="button" type="button" id="historySyncBtn">Geçmiş verileri yükle ve tüm tahminleri yenile</button></div>
+ <div id="historySyncStatus" class="history-progress" aria-live="polite">Henüz başlatılmadı.</div>
+ <progress id="historySyncProgress" max="100" value="0"></progress>
+</section>
+<script>
+(() => {
+ const button=document.getElementById("historySyncBtn");
+ const status=document.getElementById("historySyncStatus");
+ const bar=document.getElementById("historySyncProgress");
+ if(!button||!status||!bar)return;
+ const show=(job)=>{
+  bar.value=job.percent||0;
+  if(job.status==="completed"){status.textContent="Tamamlandı · "+job.fixtures_count+" geçmiş maç tarandı · "+job.predictions_processed+" yaklaşan maçın tahmini yenilendi.";button.disabled=false;button.textContent="Geçmiş verileri yeniden güncelle";return;}
+  if(job.status==="error"){status.textContent="İşlem durdu: "+(job.last_error||"Bilinmeyen hata")+" · Yeniden deneyebilirsin.";button.disabled=false;button.textContent="Yeniden dene";return;}
+  const detail=job.phase==="history"?(job.processed_days+"/"+job.total_days+" gün · "+job.fixtures_count+" maç"):(job.predictions_processed+"/"+job.predictions_total+" maç tahmini");
+  status.textContent="Çalışıyor · "+detail+" · "+job.percent+"%";
+ };
+ async function run(){
+  button.disabled=true;button.textContent="Senkronizasyon sürüyor…";
+  try{
+   let response=await fetch("/sync/history/start",{method:"POST"});
+   if(!response.ok)throw new Error("İş başlatılamadı ("+response.status+")");
+   let job=await response.json();show(job);
+   while(job.status==="running"){
+    await new Promise(resolve=>setTimeout(resolve,250));
+    response=await fetch("/sync/history/step",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:job.job_id})});
+    if(!response.ok)throw new Error("İşlem adımı başarısız ("+response.status+")");
+    job=await response.json();show(job);
+   }
+  }catch(error){status.textContent="Bağlantı hatası: "+error.message+" · Sayfayı yenileyip yeniden başlatabilirsin.";button.disabled=false;button.textContent="Yeniden dene";}
+ }
+ button.addEventListener("click",run);
+})();
+</script>
 <nav class="bulletin-tabs"><a class="{{'active' if view=='upcoming' else ''}}" href="/?date={{day}}&view=upcoming">Oynanmamış maçlar <span>{{upcoming_count}}</span></a><a class="{{'active' if view=='live' else ''}}" href="/?date={{day}}&view=live">Canlı maçlar <span>{{live_count}}</span></a><a class="{{'active' if view=='completed' else ''}}" href="/?date={{day}}&view=completed">Tamamlananlar</a></nav>
 {% if not matches %}<section class="empty"><h2>{% if view=='completed' %}Bu tarihte tamamlanan maç yok{% elif view=='live' %}Şu anda canlı maç bulunamadı{% else %}Oynanmamış maç bulunamadı{% endif %}</h2><p>SportScore üzerinden seçilen tarihin maçlarını otomatik getirebilirsin.</p></section>{% else %}<div class="table-wrap"><table><tr><th>Saat</th><th>Maç</th><th>Lig</th><th>Durum</th><th>Skor</th><th></th></tr>{% for m in matches %}<tr><td>{{m.kickoff[11:16] if m.kickoff and m.kickoff|length>15 else m.kickoff}}</td><td><b>{{m.home}} – {{m.away}}</b></td><td>{{m.league or "—"}}</td><td>{{"Tamamlandı" if m.status=="finished" else "Canlı" if m.status=="live" else "Başlamadı"}}</td><td>{% if m.home_goals is not none %}{{m.home_goals}} – {{m.away_goals}}{% else %}—{% endif %}</td><td><a href="/match/{{m.id}}">Detay →</a></td></tr>{% endfor %}</table></div>{% endif %}
 {% endblock %}

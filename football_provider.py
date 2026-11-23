@@ -47,9 +47,13 @@ class FootballProvider:
             pass
         return text
 
-    def fixtures(self, day):
+    def fixtures(self, day, status=None):
+        params = {"sport": "football", "date": day, "limit": 200}
+        if status in ("live", "finished", "upcoming"):
+            params["status"] = status
         try:
-            response = self.session.get(BASE_URL, params={"sport": "football", "date": day, "limit": 200}, timeout=25)
+            # Keep each date-sized request comfortably below Render's 30s worker timeout.
+            response = self.session.get(BASE_URL, params=params, timeout=10)
         except requests.RequestException as exc:
             raise ProviderError(f"SportScore bağlantı hatası: {exc}") from exc
         if response.status_code == 429:
@@ -99,9 +103,10 @@ class FootballProvider:
                 state = "scheduled"
 
             score = item.get("score") if isinstance(item.get("score"), dict) else {}
-            hg = self.pick(item, "home_score", "home_goals", default=self.pick(score, "home", "home_score"))
-            ag = self.pick(item, "away_score", "away_goals", default=self.pick(score, "away", "away_score"))
-            ht = item.get("halftime") if isinstance(item.get("halftime"), dict) else item.get("half_time") if isinstance(item.get("half_time"), dict) else {}
+            scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
+            hg = self.pick(item, "home_score", "home_goals", default=self.pick(score, "home", "home_score", default=self.pick(scores, "home", "home_score")))
+            ag = self.pick(item, "away_score", "away_goals", default=self.pick(score, "away", "away_score", default=self.pick(scores, "away", "away_score")))
+            ht = item.get("halftime") if isinstance(item.get("halftime"), dict) else item.get("half_time") if isinstance(item.get("half_time"), dict) else scores.get("halftime", {}) if isinstance(scores.get("halftime"), dict) else score.get("halftime", {}) if isinstance(score.get("halftime"), dict) else score.get("half_time", {}) if isinstance(score.get("half_time"), dict) else {}
             output.append({
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
