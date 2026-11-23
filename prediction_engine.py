@@ -4,6 +4,8 @@ No odds or injury assumptions are invented. Markets requiring unavailable data
 (corners) are deliberately omitted.
 """
 import math
+import re
+import unicodedata
 from collections import defaultdict
 
 RECENT_LIMIT = 10
@@ -22,10 +24,22 @@ def _matrix(home_xg, away_xg):
     ap = [_poisson(away_xg, i) for i in range(MAX_GOALS + 1)]
     return [[hp[h] * ap[a] for a in range(MAX_GOALS + 1)] for h in range(MAX_GOALS + 1)]
 
+def _normalize_team(value):
+    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    removable = {"fc", "afc", "cf", "sc", "fk", "sk", "ks", "club", "football", "soccer", "kulubu", "spor"}
+    words = [word for word in text.split() if word not in removable]
+    return " ".join(words)
+
+
 def _team_rows(rows, team):
+    target = _normalize_team(team)
     found = []
     for row in rows:
-        if row.get("home") == team or row.get("away") == team:
+        home_match = _normalize_team(row.get("home")) == target
+        away_match = _normalize_team(row.get("away")) == target
+        if home_match or away_match:
             if row.get("home_goals") is not None and row.get("away_goals") is not None:
                 found.append(row)
     return found[-RECENT_LIMIT:]
