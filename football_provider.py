@@ -47,9 +47,13 @@ class FootballProvider:
             pass
         return text
 
-    def fixtures(self, day):
+    def fixtures(self, day, status=None):
+        params = {"sport": "football", "date": day, "limit": 200}
+        if status in ("live", "finished", "upcoming"):
+            params["status"] = status
         try:
-            response = self.session.get(BASE_URL, params={"sport": "football", "date": day, "limit": 200}, timeout=25)
+            # Keep each date-sized request comfortably below Render's 30s worker timeout.
+            response = self.session.get(BASE_URL, params=params, timeout=10)
         except requests.RequestException as exc:
             raise ProviderError(f"SportScore bağlantı hatası: {exc}") from exc
         if response.status_code == 429:
