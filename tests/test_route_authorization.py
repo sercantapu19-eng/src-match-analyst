@@ -7,6 +7,7 @@ import app as app_module
 class RouteAuthorizationTests(unittest.TestCase):
     def setUp(self):
         self.previous_admin_ids = os.environ.get("ADMIN_USER_IDS")
+        os.environ.pop("ADMIN_USER_IDS", None)
         os.environ.pop("ADMIN_EMAILS", None)
         app_module.app.config.update(TESTING=True)
         self.client = app_module.app.test_client()
@@ -14,10 +15,19 @@ class RouteAuthorizationTests(unittest.TestCase):
             session["_csrf_token"] = "test-csrf-token"
 
     def tearDown(self):
-        if self.previous_admin_emails is None:
-            os.environ.pop("ADMIN_EMAILS", None)
+        if self.previous_admin_ids is None:
+            os.environ.pop("ADMIN_USER_IDS", None)
         else:
-            os.environ["ADMIN_EMAILS"] = self.previous_admin_emails
+            os.environ["ADMIN_USER_IDS"] = self.previous_admin_ids
+
+    def test_admin_authority_uses_user_id_not_email(self):
+        with self.client.session_transaction() as session:
+            session["user_id"] = 51
+            session["user_email"] = "admin@example.com"
+        os.environ["ADMIN_EMAILS"] = "admin@example.com"
+        self.assertEqual(self.client.get("/match/new").status_code, 403)
+        os.environ["ADMIN_USER_IDS"] = "51"
+        self.assertEqual(self.client.get("/match/new").status_code, 200)
 
     def test_admin_routes_reject_anonymous_requests(self):
         cases = [
