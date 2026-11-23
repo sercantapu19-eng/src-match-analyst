@@ -34,7 +34,7 @@ def sync_prediction_rows(c,mid):
    c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction",(mid,label,m[k]))
 
 def provider_ready():
- return bool(os.environ.get("API_FOOTBALL_KEY"))
+ return True  # SportScore supports public access; API key is optional
 
 init_db()
 
@@ -42,26 +42,24 @@ init_db()
 def index():
  day=request.args.get("date") or date.today().isoformat()
  view=request.args.get("view","upcoming")
- if view not in ("upcoming","completed"): view="upcoming"
- status_filter="finished" if view=="completed" else "scheduled"
+ if view not in ("upcoming","live","completed"): view="upcoming"
+ status_filter={"completed":"finished","live":"live","upcoming":"scheduled"}[view]
  with db() as c:
   ms=c.execute("""SELECT m.*,s.id saved FROM matches m LEFT JOIN saved_matches s ON s.match_id=m.id
    WHERE substr(m.kickoff,1,10)=? AND m.status=? ORDER BY m.kickoff""",(day,status_filter)).fetchall()
   saved=c.execute("SELECT COUNT(*) FROM saved_matches").fetchone()[0]
   done=c.execute("SELECT COUNT(*) FROM matches WHERE status='finished'").fetchone()[0]
   upcoming=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'",(day,)).fetchone()[0]
+  live_count=c.execute("SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=? AND status='live'",(day,)).fetchone()[0]
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
-  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming)
+  provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,live_count=live_count)
 
 @app.post("/sync/fixtures")
 def sync_fixtures():
  day=request.form.get("date") or date.today().isoformat()
- if not provider_ready():
-  flash("Otomatik fikstür için API-Football anahtarı henüz tanımlanmadı. Render > Environment bölümüne API_FOOTBALL_KEY eklenmeli.","error")
-  return redirect(url_for("index",date=day))
  try:
-  provider=FootballProvider(os.environ["API_FOOTBALL_KEY"])
+  provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
   fixtures=provider.fixtures(day)
   with db() as c:
    for f in fixtures:
@@ -73,12 +71,12 @@ def sync_fixtures():
       status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
       ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short""",
       (f["home"],f["away"],f["league"],f["kickoff"],f["status"],datetime.utcnow().isoformat(),
-       "api-football",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"]))
+       "sportscore",str(f["id"]),f["home_goals"],f["away_goals"],f["ht_home"],f["ht_away"],f["status_short"]))
    c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
-    ("api-football",day,datetime.utcnow().isoformat(),len(fixtures),"success","Fikstür senkronizasyonu tamamlandı"))
+    ("sportscore",day,datetime.utcnow().isoformat(),len(fixtures),"success","SportScore fikstür senkronizasyonu tamamlandı"))
   flash(f"{len(fixtures)} maç otomatik olarak içe aktarıldı/güncellendi.","success")
  except ProviderError as e:
-  with db() as c:c.execute("INSERT INTO sync_log(provider,day,ran_at,status,message) VALUES(?,?,?,?,?)",("api-football",day,datetime.utcnow().isoformat(),"error",str(e)))
+  with db() as c:c.execute("INSERT INTO sync_log(provider,day,ran_at,status,message) VALUES(?,?,?,?,?)",("sportscore",day,datetime.utcnow().isoformat(),"error",str(e)))
   flash(f"Veri sağlayıcı hatası: {e}","error")
  except Exception as e:
   flash(f"Beklenmeyen senkronizasyon hatası: {e}","error")
