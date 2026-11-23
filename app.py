@@ -231,7 +231,7 @@ def history_sync_step():
   elif phase=="predictions":
    history=[dict(x) for x in c.execute("""SELECT id,home,away,league,status,home_goals,away_goals,ht_home,ht_away
     FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL ORDER BY kickoff""").fetchall()]
-   batch=c.execute("""SELECT * FROM matches WHERE status='scheduled' AND kickoff>=?
+   batch=c.execute("""SELECT * FROM matches WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')
     ORDER BY kickoff,id LIMIT 8 OFFSET ?""",(job["predictions_processed"],)).fetchall()
    for target in batch:rebuild_one_prediction(c,target,history)
    processed=job["predictions_processed"]+len(batch)
