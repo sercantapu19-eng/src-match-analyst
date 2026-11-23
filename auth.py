@@ -15,13 +15,35 @@ def _db():
     if url:
         import psycopg
         from psycopg.rows import dict_row
-        return psycopg.connect(url, connect_timeout=10, row_factory=dict_row)
+        conn = psycopg.connect(url, connect_timeout=10, row_factory=dict_row)
+        original_execute = conn.execute
+        conn.execute = lambda query, params=(): original_execute(query.replace("?", "%s"), params)
+        return conn
     path = os.environ.get("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "src_match_analyst.db"))
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
+
+def init_auth_db():
+    with _db() as conn:
+        if os.environ.get("DATABASE_URL", "").strip():
+            conn.execute("""CREATE TABLE IF NOT EXISTS users (
+                id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL, created_at TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS user_saved_matches (
+                id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                saved_at TEXT NOT NULL, UNIQUE(user_id, match_id))""")
+        else:
+            conn.execute("""CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL, created_at TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS user_saved_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                saved_at TEXT NOT NULL, UNIQUE(user_id, match_id))""")
 
 def current_user_id():
     return session.get("user_id")
