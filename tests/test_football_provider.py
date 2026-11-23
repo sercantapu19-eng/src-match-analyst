@@ -64,6 +64,31 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(rows[1]["ht_home"], 1)
         self.assertEqual(rows[1]["ht_away"], 1)
 
+    def test_common_live_status_variants_are_classified_as_live(self):
+        provider = FootballProvider()
+        class LiveResponse:
+            status_code = 200
+            ok = True
+            text = ""
+            def json(self):
+                return {"fixtures": [
+                    {"id": 301, "home": "Team A", "away": "Team B", "status": "In Progress",
+                     "home_score": 1, "away_score": 2},
+                    {"id": 302, "home": "Team C", "away": "Team D", "status": {"long": "1st Half", "short": "1H"},
+                     "home_score": 0, "away_score": 1},
+                    {"id": 303, "home": "Team E", "away": "Team F", "status": "Unknown",
+                     "home_score": 2, "away_score": 0, "elapsed": 54},
+                    {"id": 304, "home": "Team G", "away": "Team H", "status": "Not Started",
+                     "home_score": 0, "away_score": 0}
+                ]}
+        class LiveSession:
+            def get(self, url, params, timeout):
+                return LiveResponse()
+        provider.session = LiveSession()
+        rows = provider.fixtures("2026-11-23")
+        self.assertEqual([row["status"] for row in rows], ["live", "live", "live", "scheduled"])
+        self.assertEqual(rows[2]["elapsed_minute"], 54)
+
     def test_compact_finished_status_codes_are_not_discarded(self):
         provider = FootballProvider()
         class CompactStatusResponse:
