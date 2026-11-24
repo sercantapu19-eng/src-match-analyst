@@ -211,7 +211,7 @@ def init_db():
    c.execute("""CREATE TABLE IF NOT EXISTS match_live_state(
     match_id BIGINT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,provider_slug TEXT DEFAULT '',
     status TEXT DEFAULT 'live',minute TEXT,home_score INTEGER,away_score INTEGER,ht_home INTEGER,ht_away INTEGER,
-    last_success_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '')""")
+    last_success_at TEXT,last_attempt_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '')""")
    c.execute("""CREATE TABLE IF NOT EXISTS match_events(
     id BIGSERIAL PRIMARY KEY,match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     event_uid TEXT NOT NULL,event_type TEXT NOT NULL,event_status TEXT DEFAULT 'confirmed',
@@ -253,7 +253,7 @@ def init_db():
   c.execute("""CREATE TABLE IF NOT EXISTS match_live_state(
    match_id INTEGER PRIMARY KEY,provider_slug TEXT DEFAULT '',status TEXT DEFAULT 'live',
    minute TEXT,home_score INTEGER,away_score INTEGER,ht_home INTEGER,ht_away INTEGER,
-   last_success_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '',
+   last_success_at TEXT,last_attempt_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '',
    FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
   c.execute("""CREATE TABLE IF NOT EXISTS match_events(
    id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL,event_uid TEXT NOT NULL,event_type TEXT NOT NULL,
@@ -398,10 +398,10 @@ def _claim_match_event_refresh(match_id, provider_slug):
  with db() as c:
   c.execute("INSERT OR IGNORE INTO match_live_state(match_id) VALUES(?)",(match_id,))
   state=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(match_id,)).fetchone()
-  if state and _is_cache_fresh(state["last_success_at"],MATCH_EVENT_CACHE_SECONDS,now_dt):
+  if state and _is_cache_fresh(state["last_attempt_at"],MATCH_EVENT_CACHE_SECONDS,now_dt):
    return False,dict(state)
   cursor=c.execute("""UPDATE match_live_state SET lease_until=?,provider_slug=COALESCE(NULLIF(?,''),provider_slug)
-   WHERE match_id=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,provider_slug or "",match_id,now))
+   WHERE match_id=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,now,provider_slug or "",match_id,now))
   state=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(match_id,)).fetchone()
   return cursor.rowcount>0,dict(state) if state else {}
 
@@ -414,8 +414,8 @@ def _finish_match_event_refresh(match_id, *, provider_slug="", status="", minute
    provider_slug=COALESCE(NULLIF(?,''),provider_slug),status=COALESCE(NULLIF(?,''),status),
    minute=COALESCE(?,minute),home_score=COALESCE(?,home_score),away_score=COALESCE(?,away_score),
    ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away),
-   last_success_at=?,last_error=?,lease_until=NULL WHERE match_id=?""",
-   (provider_slug or "",status or "",minute,home_score,away_score,ht_home,ht_away,now,error[:500],match_id))
+   last_success_at=CASE WHEN ?='' THEN ? ELSE last_success_at END,last_error=?,lease_until=NULL WHERE match_id=?""",
+   (provider_slug or "",status or "",minute,home_score,away_score,ht_home,ht_away,error,now,error[:500],match_id))
 
 
 def _live_period(status_short):
