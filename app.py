@@ -30,7 +30,7 @@ def inject_template_security():
 def enforce_csrf():
  if request.method not in ("POST","PUT","PATCH","DELETE"):
   return
- if request.endpoint == "refresh_results":
+ if request.endpoint in ("refresh_results","refresh_missing_predictions"):
   expected_token=os.environ.get("RESULT_SYNC_TOKEN","").strip()
   supplied=request.headers.get("Authorization","")
   if expected_token and hmac.compare_digest(supplied, "Bearer "+expected_token):
