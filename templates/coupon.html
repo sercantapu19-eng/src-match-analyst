@@ -23,20 +23,24 @@
    button.disabled=true;
    const body=new URLSearchParams({
     csrf_token:token,
+    match_id:button.dataset.matchId,
     market_key:button.dataset.marketKey,
     selection_key:button.dataset.selectionKey
    });
    try {
-    const response=await fetch("/match/"+button.dataset.matchId+"/save-prediction",{
+    const response=await fetch("/coupon/draft/add",{
      method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded","X-CSRF-Token":token},
      body:body.toString()
     });
     const result=await response.json();
     if(!response.ok || !result.ok) throw new Error(result.error || "Kayıt yapılamadı");
     button.dataset.saved="true";
-    button.textContent="✓ Kaydedildi";
+    button.textContent="✓ Kupona eklendi";
     button.classList.remove("secondary");
     button.classList.add("saved-prediction");
+    let draftLink=document.getElementById("couponDraftLink");
+    if(!draftLink){draftLink=document.createElement("a");draftLink.id="couponDraftLink";draftLink.className="button";draftLink.href="/coupon/draft";draftLink.textContent="Taslak kuponu görüntüle";document.querySelector(".hero")?.after(draftLink);}
+    draftLink.textContent="Taslak kuponu görüntüle ("+(result.draft_count||0)+")";
    } catch(error) {
     button.disabled=false;
     button.textContent="Tekrar dene";
