@@ -22,14 +22,18 @@ class OddsProviderError(Exception):
 def _name_key(value):
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(ch for ch in text if not unicodedata.combining(ch)).casefold()
-    return " ".join(re.findall(r"[a-z0-9]+", text))
+    tokens = re.findall(r"[a-z0-9]+", text)
+    suffixes = {"fc", "cf", "sk", "fk", "sc", "club", "football", "club"}
+    while tokens and tokens[-1] in suffixes:
+        tokens.pop()
+    return " ".join(tokens)
 
 
 def _team_match(a, b):
     left, right = _name_key(a), _name_key(b)
     if not left or not right:
         return False
-    if left == right or left in right or right in left:
+    if left == right:
         return True
     return SequenceMatcher(None, left, right).ratio() >= 0.92
 
@@ -73,7 +77,7 @@ class ApiFootballOddsProvider:
             dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            day = dt.date().isoformat()
+            day = dt.astimezone(timezone.utc).date().isoformat()
         except ValueError:
             raise OddsProviderError("Maç başlangıç tarihi eşleştirme için geçersiz.")
         payload = self._get("/fixtures", {"date": day, "timezone": "UTC"})
