@@ -1,6 +1,22 @@
 {% extends "base.html" %}{% block content %}
-<nav class="detail-actions"><a class="button secondary" href="/">← Bültene dön</a></nav>
-<section class="hero saved-hero"><div><div class="eyebrow">SRC MATCH ANALYST · KİŞİSEL LİSTEN</div><h1>Kaydedilen maçlar</h1><p>Yalnızca bu hesapta kaydettiğin maçlar görünür.</p></div><div class="stats"><div><b>{{matches|length}}</b><small>Kayıtlı maç</small></div></div></section>
+<nav class="detail-actions"><a class="button secondary" href="/">← Bültene dön</a><a class="button" href="/coupon/draft">＋ Kupon oluştur</a></nav>
+<section class="hero saved-hero"><div><div class="eyebrow">SRC MATCH ANALYST · KİŞİSEL LİSTEN</div><h1>Kayıtlı Kuponlar</h1><p>Maç seçimlerini kuponlar halinde düzenle; her kuponu kendi adıyla sakla.</p></div><div class="stats"><div><b>{{coupons|length}}</b><small>Kayıtlı kupon</small></div></div></section>
+{% if coupons %}
+<section class="saved-matches-grid" aria-label="Kayıtlı kuponlar">
+{% for coupon in coupons %}
+<article class="panel saved-match-card">
+ <div class="saved-section-heading"><div><h2>{{coupon.name}}</h2><p class="saved-card-meta">{{coupon.saved_at[:16] if coupon.saved_at else coupon.created_at[:16]}} · {{coupon_items[coupon.id]|length}} bahis</p></div><span class="saved-section-count">KUPON</span></div>
+ {% for p in coupon_items[coupon.id] %}
+ <div class="coupon-saved-row"><div><strong>{{p.home|team_display}} – {{p.away|team_display}}</strong><small>{{p.league}} · {{p.kickoff[:10] if p.kickoff else "—"}} {{p.kickoff[11:16] if p.kickoff and p.kickoff|length>=16 else ""}}</small></div><span>{{p.market_key|market_tr}} · {{p.selection_key|selection_tr(p.market_key)}}</span><span>{% if p.status=="finished" %}{{p.home_goals if p.home_goals is not none else "—"}} – {{p.away_goals if p.away_goals is not none else "—"}}{% else %}Bekliyor{% endif %}</span><a href="/match/{{p.id}}">Analiz →</a></div>
+ {% endfor %}
+ <form method="post" action="/coupon/{{coupon.id}}/delete" onsubmit="return confirm('Bu kupon silinsin mi?')"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="button secondary" type="submit">Kuponu sil</button></form>
+</article>
+{% endfor %}
+</section>
+{% else %}
+<section class="empty"><h2>Henüz kayıtlı kupon yok</h2><p>Maç analizlerinden veya Kupon Analiz Merkezi'nden bahis seçimlerini kupona ekle. Sonra kuponuna isim vererek kaydet.</p><a class="button" href="/coupon">Kupon Analiz Merkezi</a></section>
+{% endif %}
+<section class="panel"><h2>Eski kayıtların</h2><p class="muted">Önceden tek tek kaydettiğin maçlar ve tahminler korunmuştur.</p>
 {% if selected_predictions %}
 <section class="panel saved-match saved-predictions-panel">
  <div class="saved-section-heading"><div><h2>Kaydettiğim tahminler</h2><p class="muted">Yalnızca seçtiğin pazar tahminleri burada listelenir.</p></div><span class="saved-section-count">{{selected_predictions|length}} tahmin</span></div>
