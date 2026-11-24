@@ -890,6 +890,8 @@ def coupon_center():
     market_labels = {"match_result":"Maç Sonucu","goals":"2,5 Gol","btts":"KG Var/Yok",
         "htft":"İY/MS","first_half_btts":"1. Yarı KG","second_half_btts":"2. Yarı KG","corners":"Korner"}
     with db() as c:
+        uid = current_user_id() or 0
+        saved_ids = {row["match_id"] for row in c.execute("SELECT match_id FROM user_saved_matches WHERE user_id=?", (uid,)).fetchall()} if uid else set()
         fixtures = c.execute("""SELECT * FROM matches
             WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')
             ORDER BY kickoff,id""").fetchall()
@@ -926,7 +928,7 @@ def coupon_center():
             row={"id":match["id"],"home":match["home"],"away":match["away"],
                 "league":match["league"] or "Lig belirtilmedi","kickoff":match["kickoff"],
                 "market":market_labels.get(key,key),"selection":label,
-                "probability":round(probability*100,1),"odds":odds}
+                "probability":round(probability*100,1),"odds":odds,"saved":match["id"] in saved_ids}
             if odds is None: waiting.append(row)
             elif min_odds <= odds <= max_odds: ready.append(row)
     ready.sort(key=lambda row:(-row["probability"],row["kickoff"]))
@@ -957,6 +959,7 @@ def save(mid):
   if c.execute("SELECT 1 FROM matches WHERE id=?",(mid,)).fetchone():
    c.execute("INSERT INTO user_saved_matches(user_id,match_id,saved_at) VALUES(?,?,?) ON CONFLICT(user_id,match_id) DO NOTHING",(uid,mid,datetime.utcnow().isoformat()))
  flash("Maç kaydedildi. Kaydedilen maçlar bölümünden her zaman ulaşabilirsin.","success")
+ if request.args.get("next") == "coupon": return redirect(url_for("coupon_center"))
  return redirect(url_for("detail",mid=mid))
 @app.post("/match/<int:mid>/unsave")
 @login_required
