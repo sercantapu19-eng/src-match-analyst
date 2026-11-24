@@ -498,8 +498,11 @@ class FootballProvider:
                 found = scalar(value.get(key))
                 if found:
                     return found
-            for key in containers:
-                child = value.get(key)
+            excluded = {"home", "away", "home_team", "away_team", "team_home", "team_away",
+                        "hometeam", "awayteam", "league", "competition", "country"}
+            for key, child in value.items():
+                if str(key).casefold() in excluded:
+                    continue
                 if isinstance(child, dict):
                     found = find(child, keys, depth + 1)
                     if found:
