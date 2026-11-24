@@ -158,7 +158,7 @@ class DateScopedResultSyncTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertEqual(
             [(row["actual"], row["outcome"]) for row in outcomes],
-            [("MS 1", "won"), ("Alt 2,5", "won")],
+            [("Alt 2,5", "won"), ("MS 1", "won")],
         )
 
 
