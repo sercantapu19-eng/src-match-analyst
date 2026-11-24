@@ -1619,6 +1619,7 @@ def match_live_data(mid):
      resolved_slug=""
      try:
       candidate_slugs=provider.match_slug_candidates(match.get("home"),match.get("away"))
+      detail_blocked=False
       for candidate_slug in candidate_slugs:
        try:
         candidate_payload=provider.match_detail(candidate_slug)
@@ -1626,13 +1627,14 @@ def match_live_data(mid):
         app.logger.info("SportScore candidate detail not found: match_id=%s slug=%s error=%s",
          mid,candidate_slug,detail_error)
         if any(code in str(detail_error) for code in ("HTTP 401","HTTP 403","HTTP 429")):
+         detail_blocked=True
          break
         continue
        if provider.match_detail_matches_teams(candidate_payload,match.get("home"),match.get("away")):
         resolved_slug=candidate_slug
         resolved_detail_payload=candidate_payload
         break
-      if not resolved_slug and not any(code in str(locals().get("detail_error","")) for code in ("HTTP 401","HTTP 403","HTTP 429")):
+      if not resolved_slug and not detail_blocked:
        for candidate_slug in provider.team_slug_match_candidates(match.get("home"),match.get("away")):
         try:
          candidate_payload=provider.match_detail(candidate_slug)
