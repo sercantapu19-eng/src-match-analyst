@@ -6,7 +6,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
 from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required, is_admin_user
-from result_sync import actual_market_values, evaluate_prediction, prefer_saved_match
+from result_sync import actual_market_values, evaluate_prediction, prefer_saved_match, matching_fixture_rows
 
 app=Flask(__name__)
 secret_key=os.environ.get("SECRET_KEY","").strip()
@@ -438,25 +438,23 @@ def refresh_live_fixtures():
   with db() as c:
    # Include scheduled rows too: a match must be promoted to live when the
    # provider confirms kickoff, not left in "time passed / verify" forever.
-   rows=c.execute("""SELECT id,home,away,status_short,elapsed_minute,home_goals,away_goals
+   rows=[dict(row) for row in c.execute("""SELECT id,home,away,league,kickoff,status_short,elapsed_minute,home_goals,away_goals
     FROM matches WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live')
-    ORDER BY kickoff""",(day,)).fetchall()
-   by_pair={(team_key(row["home"]),team_key(row["away"])):row for row in rows}
+    ORDER BY kickoff""",(day,)).fetchall()]
    updated_ids=set()
    for fixture in live_fixtures:
-    if fixture.get("kickoff") and str(fixture["kickoff"])[:10] != day:
+    if not fixture.get("kickoff") or str(fixture["kickoff"])[:10] != day:
      continue
-    pair=(team_key(fixture["home"]),team_key(fixture["away"]))
-    row=by_pair.get(pair)
-    if not row:
-     continue
-    c.execute("""UPDATE matches SET status='live',status_short=?,
-      elapsed_minute=COALESCE(?,elapsed_minute),
-      home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals)
-      WHERE id=?""",
-      (fixture.get("status_short") or "LIVE",fixture.get("elapsed_minute"),
-       fixture.get("home_goals"),fixture.get("away_goals"),row["id"]))
-    updated_ids.add(row["id"])
+    # Match by both teams, league and kickoff proximity; team names alone are unsafe.
+    matched_rows=matching_fixture_rows(rows,fixture,provider._normalize_search_name)
+    for row in matched_rows:
+     c.execute("""UPDATE matches SET status='live',status_short=?,
+       elapsed_minute=COALESCE(?,elapsed_minute),
+       home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals)
+       WHERE id=?""",
+       (fixture.get("status_short") or "LIVE",fixture.get("elapsed_minute"),
+        fixture.get("home_goals"),fixture.get("away_goals"),row["id"]))
+     updated_ids.add(row["id"])
    # Expire old live flags without deleting the match or its prediction/history rows.
    stale_cutoff=(datetime.now(ZoneInfo("Europe/Istanbul"))-timedelta(hours=4)).isoformat()
    c.execute("""UPDATE matches SET status='scheduled',status_short='UNVERIFIED',
@@ -556,10 +554,15 @@ def refresh_results():
       continue
      pair=(key(fixture.get("home")),key(fixture.get("away")))
      triple=pair+(key(fixture.get("league")),)
-     row=candidate_by_key.get(triple)
-     if row is None:
-      possible=candidate_by_pair.get(pair,[])
-      row=prefer_saved_match(possible)
+     possible=candidate_by_pair.get(pair,[])
+     identity_matches=matching_fixture_rows(possible,fixture,provider._normalize_search_name)
+     row=prefer_saved_match(identity_matches)
+     if row is None and identity_matches:
+      # Exact duplicate rows are safe to sync together; choose a stable representative.
+      row=sorted(identity_matches,key=lambda item:int(item["id"]))[0]
+     # Never create a second fixture when a same-team candidate exists but its
+     # league/kickoff cannot verify that it is the same match.
+     identity_ambiguous=bool(possible) and not identity_matches
 
      if state=="scheduled":
       if kickoff_day < today.isoformat():
@@ -567,6 +570,8 @@ def refresh_results():
       if row:
        if row["status"]=="scheduled":
         upcoming_ready+=1
+       continue
+      if identity_ambiguous:
        continue
       mid=upsert_fixture_record(c,fixture)
       if mid:
@@ -587,7 +592,10 @@ def refresh_results():
       continue
 
      if row is None:
-      # Import provider-confirmed live/finished fixtures absent from local DB.
+      # Import only when no same-team local candidate exists. Ambiguous identity
+      # is skipped instead of creating a duplicate fixture row.
+      if identity_ambiguous:
+       continue
       mid=upsert_fixture_record(c,fixture)
       if not mid:
        continue
@@ -609,6 +617,19 @@ def refresh_results():
         fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),fixture.get("ht_away"),
         state,fixture.get("elapsed_minute"),mid))
      row["status"]=state
+     # Keep exact duplicate rows (including a user's saved copy) synchronized.
+     duplicate_rows=matching_fixture_rows(candidates,fixture,provider._normalize_search_name)
+     for twin in duplicate_rows:
+      if twin["id"]==mid:
+       continue
+      c.execute("""UPDATE matches SET status=?,status_short=?,
+       home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals),
+       ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away),
+       elapsed_minute=CASE WHEN ?='finished' THEN NULL ELSE COALESCE(?,elapsed_minute) END
+       WHERE id=?""",
+       (state,fixture.get("status_short") or ("FT" if state=="finished" else "LIVE"),
+        fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),fixture.get("ht_away"),
+        state,fixture.get("elapsed_minute"),twin["id"]))
      matched+=1
      if state!="finished":
       continue
