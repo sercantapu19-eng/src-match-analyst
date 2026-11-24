@@ -376,7 +376,7 @@ def index():
   recent_count=len(recent); recent_wins=sum(1 for item in recent if item['outcome']=='won')
   live_featured=c.execute("""SELECT id,home,away,league,kickoff,home_goals,away_goals,
    ht_home,ht_away,elapsed_minute,status_short FROM matches
-   WHERE status='live' ORDER BY COALESCE(elapsed_minute,0) DESC,kickoff DESC LIMIT 1""").fetchone()
+   WHERE status='live' ORDER BY kickoff DESC,id DESC LIMIT 1""").fetchone()
   upcoming=c.execute("""SELECT COUNT(*) FROM (
    SELECT ROW_NUMBER() OVER (
     PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
