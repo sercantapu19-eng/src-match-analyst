@@ -268,7 +268,7 @@ def init_db():
 
 
 LIVE_FEED_CACHE_SECONDS = 60
-MATCH_EVENT_CACHE_SECONDS = 60
+MATCH_EVENT_CACHE_SECONDS = 90
 LIVE_REFRESH_LEASE_SECONDS = 25
 
 
@@ -838,7 +838,7 @@ def refresh_live_fixtures():
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
   # Dedicated SportScore widget feed contains the live clock (e.g. 67' / 45+2).
-  live_fixtures=provider.live_matches(limit=50)
+  live_fixtures=_cached_sportscore_live_feed(provider)
   def team_key(value):
    normalized=provider._normalize_search_name(value)
    return " ".join(sorted(normalized.split()))
