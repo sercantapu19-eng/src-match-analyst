@@ -9,7 +9,7 @@
  <article class="saved-prediction-card">
   <strong class="saved-card-teams">{{p.home|team_display}} – {{p.away|team_display}}</strong>
   <p class="saved-card-meta">{{p.league}} · {{p.kickoff[:10] if p.kickoff else "—"}} {{p.kickoff[11:16] if p.kickoff and p.kickoff|length >= 16 else ""}}</p>
-  <p class="saved-card-market">{{p.market_key}} · {{p.selection_key}}</p>
+  <p class="saved-card-market">{{p.market_key|market_tr}} · {{p.selection_key|selection_tr(p.market_key)}}</p>
   <div class="saved-card-footer">
    {% if p.outcome=="won" %}<span class="result-won">✓ Kazandı</span>
    {% elif p.outcome=="lost" %}<span class="result-lost">✕ Kaybetti</span>
@@ -32,7 +32,7 @@
  {% if m.status=="finished" and m.home_goals is not none and m.away_goals is not none %}
  <p><strong>Gerçek skor:</strong> {{m.home_goals}} – {{m.away_goals}}</p>
  {% else %}<p><strong>Skor:</strong> —</p>{% endif %}
- <p>{{m.htft or "İY/MS tahmini yok"}} · {{m.over25 or "2,5 gol tahmini yok"}} · KG {{m.btts or "—"}} · Korner {{m.corners or "—"}}</p>
+ <p>{{m.htft or "İY/MS tahmini yok"}} · {{m.over25|goal_side if m.over25 else "2,5 gol tahmini yok"}} · KG {{m.btts|selection_tr("btts") if m.btts else "—"}} · Korner {{m.corners or "—"}}</p>
  {% set match_results = results_by_match.get(m.id, []) %}
  {% if match_results %}<div class="result-list"><strong>Tahmin sonuçları</strong>
  {% for r in match_results %}

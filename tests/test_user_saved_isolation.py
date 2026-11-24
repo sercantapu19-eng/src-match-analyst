@@ -278,11 +278,44 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertEqual(count, 1)
         page = self.client.get("/saved").get_data(as_text=True)
         self.assertIn("Kaydettiğim tahminler", page)
-        self.assertIn("over", page)
+        self.assertIn("Toplam Gol (2,5)", page)
+        self.assertIn("Üst", page)
+        self.assertNotIn("goals · over", page)
+        self.assertNotIn("btts ·", page)
 
         self._login_as(self.user_two, "two@example.com")
         other_page = self.client.get("/saved").get_data(as_text=True)
         self.assertNotIn("Alpha FC", other_page)
+
+    def test_saved_match_summary_translates_btts_and_goal_selections(self):
+        self._login_as(self.user_one, "one@example.com")
+        self._save(self.match_one)
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET over25='Over 2.5',btts='yes' WHERE id=?",
+                (self.match_one,),
+            )
+        page = self.client.get("/saved").get_data(as_text=True)
+        self.assertIn("Üst", page)
+        self.assertIn("KG Var", page)
+        self.assertNotIn("yes", page)
+        self.assertNotIn("Over 2.5", page)
+
+    def test_saved_prediction_market_names_are_turkish(self):
+        self._login_as(self.user_one, "one@example.com")
+        with application.db() as conn:
+            conn.executemany(
+                "INSERT INTO user_saved_predictions(user_id,match_id,market_key,selection_key,saved_at) VALUES(?,?,?,?,?)",
+                [
+                    (self.user_one,self.match_one,"btts","Var","test"),
+                    (self.user_one,self.match_one,"match_result","1","test"),
+                ],
+            )
+        page = self.client.get("/saved").get_data(as_text=True)
+        self.assertIn("Karşılıklı Gol (KG) · Var", page)
+        self.assertIn("Maç Sonucu · MS 1", page)
+        self.assertNotIn("btts · Var", page)
+        self.assertNotIn("match_result · 1", page)
 
     def test_individual_prediction_save_is_idempotent(self):
         self._login_as(self.user_one, "one@example.com")
