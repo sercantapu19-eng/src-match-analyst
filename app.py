@@ -516,6 +516,7 @@ def index():
    FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
     AND COALESCE(prediction_message,'')=''
     AND COALESCE(market_probabilities,'{}') NOT IN ('','{}')
+    AND datetime(kickoff)>=datetime('now')
    ORDER BY kickoff,id""",(day,)).fetchall()
   daily_picks,daily_match_count=_daily_top_ten(daily_candidate_rows)
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
