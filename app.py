@@ -340,7 +340,7 @@ def _cached_sportscore_live_feed(provider):
 def _load_match_event_rows(c, match_id):
  rows=c.execute("""SELECT event_uid,event_type,event_status,related_event_uid,team_side,minute,
   extra_minute,sort_key,primary_player,secondary_player,detail_note,icon,label,counts_for_score,
-  first_seen_at,last_seen_at FROM match_events WHERE match_id=? ORDER BY sort_key,id""",(match_id,)).fetchall()
+  first_seen_at,last_seen_at FROM match_events WHERE match_id=? ORDER BY sort_key DESC,id DESC""",(match_id,)).fetchall()
  result=[]
  for row in rows:
   item=dict(row)
