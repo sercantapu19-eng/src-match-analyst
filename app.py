@@ -1618,7 +1618,8 @@ def match_live_data(mid):
      resolved_detail_payload=None
      resolved_slug=""
      try:
-      for candidate_slug in provider.match_slug_candidates(match.get("home"),match.get("away")):
+      candidate_slugs=provider.match_slug_candidates(match.get("home"),match.get("away"))
+      for candidate_slug in candidate_slugs:
        try:
         candidate_payload=provider.match_detail(candidate_slug)
        except ProviderError as detail_error:
@@ -1631,6 +1632,20 @@ def match_live_data(mid):
         resolved_slug=candidate_slug
         resolved_detail_payload=candidate_payload
         break
+      if not resolved_slug and not any(code in str(locals().get("detail_error","")) for code in ("HTTP 401","HTTP 403","HTTP 429")):
+       for candidate_slug in provider.team_slug_match_candidates(match.get("home"),match.get("away")):
+        try:
+         candidate_payload=provider.match_detail(candidate_slug)
+        except ProviderError as detail_error:
+         app.logger.info("SportScore team-slug detail not found: match_id=%s slug=%s error=%s",
+          mid,candidate_slug,detail_error)
+         if any(code in str(detail_error) for code in ("HTTP 401","HTTP 403","HTTP 429")):
+          break
+         continue
+        if provider.match_detail_matches_teams(candidate_payload,match.get("home"),match.get("away")):
+         resolved_slug=candidate_slug
+         resolved_detail_payload=candidate_payload
+         break
       if resolved_slug:
        fixture=dict(fixture)
        fixture["slug"]=resolved_slug
