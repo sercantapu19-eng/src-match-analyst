@@ -216,3 +216,83 @@ label,.muted,small{color:var(--muted)}
 .daily-ten-empty{margin:0 0 22px}
 .daily-ten-empty>strong{display:inline-block;margin-top:8px;color:var(--accent);font-size:13px}
 @media(max-width:700px){.daily-ten-grid{grid-template-columns:1fr}.daily-ten-heading{align-items:flex-start}.daily-ten-heading>strong{font-size:15px;padding:8px 10px}}
+
+
+/* Mobile header: keep the account action visible in the top-right corner. */
+@media(max-width:700px){
+ .src-header{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  grid-template-areas:"brand actions" "nav nav";
+  align-items:center;
+  gap:9px 10px;
+  padding:9px 11px;
+ }
+ .src-brand{grid-area:brand;min-width:0}
+ .src-brand-copy strong{font-size:19px}
+ .src-brand-copy small{font-size:9px}
+ .src-header-actions{
+  grid-area:actions;
+  display:flex!important;
+  align-items:center;
+  justify-self:end;
+  align-self:center;
+  margin:0!important;
+  gap:6px;
+ }
+ .src-header-actions form{display:flex;margin:0}
+ .src-user{display:none}
+ .src-header-actions .src-login{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:78px;
+  min-height:40px;
+  padding:8px 12px;
+  border:1px solid var(--accent);
+  border-radius:9px;
+  background:var(--accent);
+  color:#14220b!important;
+  font-size:12px;
+  font-weight:850;
+  white-space:nowrap;
+  box-shadow:0 2px 8px #00000012;
+ }
+ .src-nav{
+  grid-area:nav;
+  order:initial;
+  flex:initial;
+  width:100%;
+  min-width:0;
+  justify-content:flex-start;
+  overflow-x:auto;
+  padding-bottom:2px;
+ }
+ .src-nav a{flex:0 0 auto}
+}
+
+/* Improve legibility of fixture cards and secondary labels on small screens. */
+@media(max-width:700px){
+ .src-fixtures tbody tr{color:var(--text)}
+ .src-fixtures td,
+ .src-fixtures td b,
+ .src-fixtures td span,
+ .src-fixtures .team-pair,
+ .src-fixtures .team-pair b,
+ .src-fixtures .fixture-date,
+ .src-fixtures .fixture-hour,
+ .src-fixtures .fixture-detail-link{
+  color:var(--text)!important;
+  opacity:1!important;
+ }
+ .src-fixtures .fixture-hour,
+ .src-fixtures td:nth-child(2){color:var(--muted)!important}
+ .src-fixtures .fixture-detail-link{font-weight:850;text-decoration:underline;text-underline-offset:2px}
+ .live-featured-teams strong,
+ .live-featured-score small,
+ .live-featured-events>span,
+ .live-featured>a{opacity:1;color:var(--text)}
+ .live-featured-teams strong{font-weight:800}
+ .daily-ten-pick>small,.daily-ten-disclaimer{color:var(--text);opacity:.9}
+ .src-header-actions .src-login{opacity:1}
+}
