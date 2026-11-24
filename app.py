@@ -1,6 +1,6 @@
 import os, sqlite3, json, time, re, secrets, hmac
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from football_provider import FootballProvider, ProviderError
@@ -206,6 +206,22 @@ def init_db():
     created_at TEXT NOT NULL,updated_at TEXT NOT NULL,team_names TEXT DEFAULT '[]',team_index INTEGER DEFAULT 0)""")
    c.execute("ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS team_names TEXT DEFAULT '[]'")
    c.execute("ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS team_index INTEGER DEFAULT 0")
+   c.execute("""CREATE TABLE IF NOT EXISTS provider_poll_state(
+    poll_key TEXT PRIMARY KEY,payload TEXT DEFAULT '',fetched_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '')""")
+   c.execute("""CREATE TABLE IF NOT EXISTS match_live_state(
+    match_id BIGINT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,provider_slug TEXT DEFAULT '',
+    status TEXT DEFAULT 'live',minute TEXT,home_score INTEGER,away_score INTEGER,ht_home INTEGER,ht_away INTEGER,
+    last_success_at TEXT,last_attempt_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '')""")
+   c.execute("""CREATE TABLE IF NOT EXISTS match_events(
+    id BIGSERIAL PRIMARY KEY,match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    event_uid TEXT NOT NULL,event_type TEXT NOT NULL,event_status TEXT DEFAULT 'confirmed',
+    related_event_uid TEXT DEFAULT '',team_side TEXT DEFAULT '',minute TEXT,extra_minute INTEGER,
+    sort_key INTEGER DEFAULT 999999,primary_player TEXT DEFAULT '',secondary_player TEXT DEFAULT '',
+    detail_note TEXT DEFAULT '',icon TEXT DEFAULT '',label TEXT DEFAULT '',counts_for_score BOOLEAN DEFAULT FALSE,
+    raw_meta TEXT DEFAULT '{}',first_seen_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+    UNIQUE(match_id,event_uid))""")
+   c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+   c.execute("CREATE INDEX IF NOT EXISTS idx_match_live_state_status ON match_live_state(status)")
   migration=migrate_legacy_sqlite_to_postgres()
   if migration["status"] == "legacy_file_not_found":
    app.logger.warning("Legacy data transfer requires a reachable SQLite file or a separate export.")
@@ -232,6 +248,203 @@ def init_db():
   job_cols={r[1] for r in c.execute("PRAGMA table_info(sync_jobs)").fetchall()}
   for name,typ in [("fetched_count","INTEGER DEFAULT 0"),("skipped_count","INTEGER DEFAULT 0"),("team_names","TEXT DEFAULT '[]'"),("team_index","INTEGER DEFAULT 0")]:
    if name not in job_cols: c.execute(f"ALTER TABLE sync_jobs ADD COLUMN {name} {typ}")
+  c.execute("""CREATE TABLE IF NOT EXISTS provider_poll_state(
+   poll_key TEXT PRIMARY KEY,payload TEXT DEFAULT '',fetched_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '')""")
+  c.execute("""CREATE TABLE IF NOT EXISTS match_live_state(
+   match_id INTEGER PRIMARY KEY,provider_slug TEXT DEFAULT '',status TEXT DEFAULT 'live',
+   minute TEXT,home_score INTEGER,away_score INTEGER,ht_home INTEGER,ht_away INTEGER,
+   last_success_at TEXT,last_attempt_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '',
+   FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
+  c.execute("""CREATE TABLE IF NOT EXISTS match_events(
+   id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL,event_uid TEXT NOT NULL,event_type TEXT NOT NULL,
+   event_status TEXT DEFAULT 'confirmed',related_event_uid TEXT DEFAULT '',team_side TEXT DEFAULT '',
+   minute TEXT,extra_minute INTEGER,sort_key INTEGER DEFAULT 999999,primary_player TEXT DEFAULT '',
+   secondary_player TEXT DEFAULT '',detail_note TEXT DEFAULT '',icon TEXT DEFAULT '',label TEXT DEFAULT '',
+   counts_for_score INTEGER DEFAULT 0,raw_meta TEXT DEFAULT '{}',first_seen_at TEXT NOT NULL,
+   last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+   FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,UNIQUE(match_id,event_uid))""")
+  c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+  c.execute("CREATE INDEX IF NOT EXISTS idx_match_live_state_status ON match_live_state(status)")
+
+
+LIVE_FEED_CACHE_SECONDS = 60
+MATCH_EVENT_CACHE_SECONDS = 90
+LIVE_REFRESH_LEASE_SECONDS = 25
+
+
+def _utc_iso(value=None):
+ value=value or datetime.now(timezone.utc)
+ return value.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def _is_cache_fresh(value, seconds, now=None):
+ if not value:
+  return False
+ try:
+  parsed=datetime.fromisoformat(str(value).replace("Z","+00:00"))
+  if parsed.tzinfo is None:
+   parsed=parsed.replace(tzinfo=timezone.utc)
+  age=((now or datetime.now(timezone.utc))-parsed.astimezone(timezone.utc)).total_seconds()
+  return -5 <= age < seconds
+ except (TypeError,ValueError,OverflowError):
+  return False
+
+
+def _cached_sportscore_live_feed(provider):
+ """Share one SportScore live-list fetch across every viewer and match page."""
+ poll_key="sportscore_live_matches"
+ now_dt=datetime.now(timezone.utc)
+ now=_utc_iso(now_dt)
+ lease=_utc_iso(now_dt+timedelta(seconds=LIVE_REFRESH_LEASE_SECONDS))
+ cached_payload=""
+ claimed=False
+ with db() as c:
+  c.execute("INSERT OR IGNORE INTO provider_poll_state(poll_key) VALUES(?)",(poll_key,))
+  state=c.execute("SELECT payload,fetched_at,lease_until FROM provider_poll_state WHERE poll_key=?",(poll_key,)).fetchone()
+  cached_payload=(state["payload"] or "") if state else ""
+  if state and _is_cache_fresh(state["fetched_at"],LIVE_FEED_CACHE_SECONDS,now_dt):
+   try:
+    parsed=json.loads(cached_payload or "[]")
+    return parsed if isinstance(parsed,list) else []
+   except (TypeError,ValueError):
+    cached_payload=""
+  cursor=c.execute("""UPDATE provider_poll_state SET lease_until=?
+   WHERE poll_key=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,poll_key,now))
+  claimed=cursor.rowcount>0
+ if not claimed:
+  try:
+   parsed=json.loads(cached_payload or "[]")
+   return parsed if isinstance(parsed,list) else []
+  except (TypeError,ValueError):
+   return []
+ try:
+  fixtures=provider.live_matches(limit=50)
+  payload=json.dumps(fixtures,ensure_ascii=False,separators=(",",":"))
+  completed=_utc_iso()
+  with db() as c:
+   c.execute("""UPDATE provider_poll_state SET payload=?,fetched_at=?,lease_until=NULL,last_error=''
+    WHERE poll_key=?""",(payload,completed,poll_key))
+  return fixtures
+ except Exception as exc:
+  with db() as c:
+   c.execute("UPDATE provider_poll_state SET fetched_at=?,lease_until=NULL,last_error=? WHERE poll_key=?",(_utc_iso(),str(exc)[:500],poll_key))
+  try:
+   parsed=json.loads(cached_payload or "[]")
+   if isinstance(parsed,list) and parsed:
+    return parsed
+  except (TypeError,ValueError):
+   pass
+  raise
+
+
+def _load_match_event_rows(c, match_id):
+ rows=c.execute("""SELECT event_uid,event_type,event_status,related_event_uid,team_side,minute,
+  extra_minute,sort_key,primary_player,secondary_player,detail_note,icon,label,counts_for_score,
+  first_seen_at,last_seen_at FROM match_events WHERE match_id=? ORDER BY sort_key DESC,id DESC""",(match_id,)).fetchall()
+ result=[]
+ for row in rows:
+  item=dict(row)
+  item["kind"]=item.pop("event_type")
+  item["detail"]=item.pop("detail_note") or ""
+  item["minute_label"]=f"{item['minute']}′" if item.get("minute") not in (None,"") else "—"
+  item["team"]=item.pop("team_side") or ""
+  result.append(item)
+ return result
+
+
+def _store_match_events(match_id, events, home, away):
+ provider=FootballProvider()
+ home_key=provider._normalize_search_name(home)
+ away_key=provider._normalize_search_name(away)
+ now=_utc_iso()
+ with db() as c:
+  for event in events:
+   team_key=provider._normalize_search_name(event.get("team"))
+   side=event.get("team_side") or ""
+   if side not in ("home","away"):
+    if team_key and team_key==home_key:
+     side="home"
+    elif team_key and team_key==away_key:
+     side="away"
+   raw_meta=json.dumps(event.get("raw_meta") or {},ensure_ascii=False,separators=(",",":"))
+   c.execute("""INSERT INTO match_events(
+    match_id,event_uid,event_type,event_status,related_event_uid,team_side,minute,extra_minute,sort_key,
+    primary_player,secondary_player,detail_note,icon,label,counts_for_score,raw_meta,first_seen_at,last_seen_at,updated_at
+   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   ON CONFLICT(match_id,event_uid) DO UPDATE SET
+    event_type=excluded.event_type,event_status=excluded.event_status,
+    related_event_uid=excluded.related_event_uid,team_side=excluded.team_side,minute=excluded.minute,
+    extra_minute=excluded.extra_minute,sort_key=excluded.sort_key,primary_player=excluded.primary_player,
+    secondary_player=excluded.secondary_player,detail_note=excluded.detail_note,icon=excluded.icon,
+    label=excluded.label,counts_for_score=excluded.counts_for_score,raw_meta=excluded.raw_meta,
+    last_seen_at=excluded.last_seen_at,updated_at=excluded.updated_at""",(
+    match_id,event.get("event_uid"),event.get("kind") or "unknown",event.get("event_status") or "confirmed",
+    event.get("related_event_uid") or "",side,event.get("minute"),event.get("extra_minute"),
+    event.get("sort_key",999999),event.get("primary_player") or "",event.get("secondary_player") or "",
+    event.get("detail") or "",event.get("icon") or "",event.get("label") or "",
+    bool(event.get("counts_for_score")),raw_meta,now,now,now))
+  # Only link a cancelled goal when the provider supplies an explicit related event ID.
+  for event in events:
+   related=event.get("related_event_uid")
+   if related and event.get("kind")=="goal_cancelled":
+    c.execute("""UPDATE match_events SET event_status='cancelled',counts_for_score=FALSE,updated_at=?
+     WHERE match_id=? AND event_uid=?""",(now,match_id,related))
+  # Also apply a cancellation that arrived before its referenced goal in an earlier poll.
+  c.execute("""UPDATE match_events SET event_status='cancelled',counts_for_score=FALSE,updated_at=?
+   WHERE match_id=? AND event_uid IN (
+    SELECT related_event_uid FROM match_events
+    WHERE match_id=? AND event_type='goal_cancelled' AND related_event_uid<>'')""",(now,match_id,match_id))
+
+
+def _claim_match_event_refresh(match_id, provider_slug):
+ now_dt=datetime.now(timezone.utc)
+ now=_utc_iso(now_dt)
+ lease=_utc_iso(now_dt+timedelta(seconds=LIVE_REFRESH_LEASE_SECONDS))
+ with db() as c:
+  c.execute("INSERT OR IGNORE INTO match_live_state(match_id) VALUES(?)",(match_id,))
+  state=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(match_id,)).fetchone()
+  if state and _is_cache_fresh(state["last_attempt_at"],MATCH_EVENT_CACHE_SECONDS,now_dt):
+   return False,dict(state)
+  cursor=c.execute("""UPDATE match_live_state SET lease_until=?,last_attempt_at=?,provider_slug=COALESCE(NULLIF(?,''),provider_slug)
+   WHERE match_id=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,now,provider_slug or "",match_id,now))
+  state=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(match_id,)).fetchone()
+  return cursor.rowcount>0,dict(state) if state else {}
+
+
+def _finish_match_event_refresh(match_id, *, provider_slug="", status="", minute=None,
+ home_score=None, away_score=None, ht_home=None, ht_away=None, error=""):
+ now=_utc_iso()
+ with db() as c:
+  c.execute("""UPDATE match_live_state SET
+   provider_slug=COALESCE(NULLIF(?,''),provider_slug),status=COALESCE(NULLIF(?,''),status),
+   minute=COALESCE(?,minute),home_score=COALESCE(?,home_score),away_score=COALESCE(?,away_score),
+   ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away),
+   last_success_at=CASE WHEN ?='' THEN ? ELSE last_success_at END,last_error=?,lease_until=NULL WHERE match_id=?""",
+   (provider_slug or "",status or "",minute,home_score,away_score,ht_home,ht_away,error,now,error[:500],match_id))
+
+
+def _live_period(status_short):
+ code=str(status_short or "").upper().replace(" ","_")
+ if code in ("HT","INT","BREAK","BT"):
+  return "halftime"
+ if code in ("FT","AET","PEN","FINISHED"):
+  return "finished"
+ if code in ("2H","2ND_HALF","SECOND_HALF"):
+  return "second_half"
+ if code in ("1H","1ST_HALF","FIRST_HALF"):
+  return "first_half"
+ return "live"
+
+
+def _live_minute_label(period, minute):
+ if period=="halftime":
+  return "Devre Arası"
+ if period=="finished":
+  return "Maç Tamamlandı"
+ if minute not in (None,""):
+  return f"{minute}′ · {'2. Yarı' if period=='second_half' else '1. Yarı' if period=='first_half' else 'Canlı'}"
+ return "2. Yarı" if period=="second_half" else "1. Yarı" if period=="first_half" else "Canlı dakika bekleniyor"
+
 
 def sync_prediction_rows(c,mid):
  m=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
@@ -630,7 +843,7 @@ def refresh_live_fixtures():
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
   # Dedicated SportScore widget feed contains the live clock (e.g. 67' / 45+2).
-  live_fixtures=provider.live_matches(limit=50)
+  live_fixtures=_cached_sportscore_live_feed(provider)
   def team_key(value):
    normalized=provider._normalize_search_name(value)
    return " ".join(sorted(normalized.split()))
@@ -1252,61 +1465,108 @@ def detail(mid):
 
 @app.get("/match/<int:mid>/live-data")
 def match_live_data(mid):
- # Read-only: live feed lookup and match detail requests do not write to the database.
+ """Serve persisted match events and refresh SportScore at most once per cache window."""
  with db() as c:
-  row=c.execute("SELECT id,home,away,kickoff,status,status_short,elapsed_minute,home_goals,away_goals,ht_home,ht_away FROM matches WHERE id=?",(mid,)).fetchone()
- if not row: return jsonify({"error":"Maç bulunamadı."}),404
+  row=c.execute("""SELECT id,home,away,kickoff,status,status_short,elapsed_minute,
+   home_goals,away_goals,ht_home,ht_away FROM matches WHERE id=?""",(mid,)).fetchone()
+  state_row=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(mid,)).fetchone()
+  saved_events=_load_match_event_rows(c,mid)
+ if not row:
+  return jsonify({"error":"Maç bulunamadı."}),404
  match=dict(row)
- if match["status"]!="live":
-  return jsonify({"status":match["status"],"events":[],"minute":match["elapsed_minute"]})
- try:
-  provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-  # Resolve the provider's actual fixture slug from its current live feed.
-  # The database external_id is an import identifier, not assumed to be a slug.
-  live_fixtures=provider.live_matches()
-  fixture=provider.find_matching_live_fixture(live_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
-  # Fallback to the date-scoped fixtures endpoint if the live widget omits this match.
-  if not fixture and match.get("kickoff"):
-   try:
-    match_day=datetime.fromisoformat(str(match["kickoff"]).replace("Z","+00:00")).date().isoformat()
-    daily_fixtures=provider.fixtures(match_day,status="live")
-    fixture=provider.find_matching_live_fixture(daily_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
-    app.logger.info("Live detail fallback match=%s widget_count=%s daily_count=%s matched=%s",
-     mid,len(live_fixtures),len(daily_fixtures),bool(fixture))
-   except (ValueError,TypeError) as date_error:
-    app.logger.warning("Live detail invalid kickoff match=%s: %s",mid,date_error)
-  if not fixture:
-   app.logger.warning("Live detail fixture not matched: match_id=%s home=%r away=%r kickoff=%r widget_count=%s",
-    mid,match.get("home"),match.get("away"),match.get("kickoff"),len(live_fixtures))
-   return jsonify({"status":"live","minute":match.get("elapsed_minute"),
-    "minute_label":"Canlı dakika bekleniyor","score":(
-     f"{match['home_goals']} – {match['away_goals']}" if match["home_goals"] is not None else None),
-    "ht_score":None,"events":[],"events_available":False,
-    "message":"Canlı veri sağlayıcısında bu maç henüz eşleştirilemedi."})
-  provider_slug=fixture.get("slug") or fixture.get("id")
-  payload=provider.match_detail(provider_slug)
-  events=provider.parse_match_events(payload)
+ if match["status"] not in ("live","finished"):
+  return jsonify({"status":match["status"],"events":saved_events,"minute":match["elapsed_minute"],
+   "events_available":bool(saved_events)})
+ provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
+ fixture=None
+ state=dict(state_row) if state_row else {}
+ if match["status"]=="live":
+  try:
+   live_fixtures=_cached_sportscore_live_feed(provider)
+   fixture=provider.find_matching_live_fixture(
+    live_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
+  except ProviderError as exc:
+   app.logger.warning("SportScore live-list unavailable for match %s: %s",mid,exc)
+  except Exception:
+   app.logger.exception("SportScore cached live-list failed for match %s",mid)
+ if fixture:
+  provider_slug=str(fixture.get("slug") or fixture.get("id") or "")
+  period=_live_period(fixture.get("status_short") or fixture.get("status"))
   minute=fixture.get("elapsed_minute")
-  code=str(fixture.get("status_short") or "").upper().replace(" ","_")
-  period="halftime" if code in ("HT","INT","BREAK","BT") else "finished" if code in ("FT","AET","PEN","FINISHED") else "second_half" if code in ("2H","2ND_HALF","SECOND_HALF") else "first_half" if code in ("1H","1ST_HALF","FIRST_HALF") else "live"
-  hg,ag=fixture.get("home_goals"),fixture.get("away_goals")
-  hh,ha=fixture.get("ht_home"),fixture.get("ht_away")
-  if hg is None: hg=match.get("home_goals")
-  if ag is None: ag=match.get("away_goals")
-  if hh is None: hh=match.get("ht_home")
-  if ha is None: ha=match.get("ht_away")
-  return jsonify({"status":period,"minute":minute,
-   "minute_label":"Devre Arası" if period=="halftime" else "Maç Tamamlandı" if period=="finished" else
-    (f"{minute}' · {'2. Yarı' if period=='second_half' else '1. Yarı' if period=='first_half' else 'Canlı'}" if minute is not None else
-     ("2. Yarı" if period=="second_half" else "1. Yarı" if period=="first_half" else "Canlı dakika bekleniyor")),
-   "score":f"{hg} – {ag}" if hg is not None and ag is not None else None,
-   "ht_score":f"{hh} – {ha}" if hh is not None and ha is not None else None,
-   "events":events,"events_available":bool(events),
-   "message":None if events else "Sağlayıcı bu karşılaşma için henüz olay listesi döndürmedi."})
- except ProviderError as exc:
-  app.logger.warning("Live detail unavailable for match %s: %s",mid,exc)
-  return jsonify({"status":"unavailable","minute":match.get("elapsed_minute"),"events":[],
-   "events_available":False,"message":"Canlı veri sağlayıcısına şu anda ulaşılamıyor."}),502
+  home_score=fixture.get("home_goals")
+  away_score=fixture.get("away_goals")
+  ht_home=fixture.get("ht_home")
+  ht_away=fixture.get("ht_away")
+  with db() as c:
+   c.execute("INSERT OR IGNORE INTO match_live_state(match_id) VALUES(?)",(mid,))
+   c.execute("""UPDATE match_live_state SET provider_slug=COALESCE(NULLIF(?,''),provider_slug),
+    status=?,minute=COALESCE(?,minute),home_score=COALESCE(?,home_score),
+    away_score=COALESCE(?,away_score),ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away)
+    WHERE match_id=?""",(provider_slug,period,minute,home_score,away_score,ht_home,ht_away,mid))
+  with db() as c:
+   state_row=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(mid,)).fetchone()
+   state=dict(state_row) if state_row else state
+  if minute in (None,""):
+   minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
+  if home_score is None:
+   home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
+  if away_score is None:
+   away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
+  if ht_home is None:
+   ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
+  if ht_away is None:
+   ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+ else:
+  provider_slug=str(state.get("provider_slug") or "")
+  period="finished" if match.get("status")=="finished" else _live_period(state.get("status") or match.get("status_short"))
+  minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
+  home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
+  away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
+  ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
+  ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+ if provider_slug:
+  claimed,state=_claim_match_event_refresh(mid,provider_slug)
+  if claimed:
+   try:
+    payload=provider.match_detail(provider_slug)
+    events=provider.parse_match_events(payload)
+    _store_match_events(mid,events,match.get("home"),match.get("away"))
+    _finish_match_event_refresh(mid,provider_slug=provider_slug,status=period,minute=minute,
+     home_score=home_score,away_score=away_score,ht_home=ht_home,ht_away=ht_away)
+   except ProviderError as exc:
+    app.logger.warning("SportScore event detail unavailable for match %s: %s",mid,exc)
+    _finish_match_event_refresh(mid,provider_slug=provider_slug,error=str(exc))
+   except Exception as exc:
+    app.logger.exception("Persisting live events failed for match %s",mid)
+    _finish_match_event_refresh(mid,provider_slug=provider_slug,error=str(exc))
+ with db() as c:
+  state_row=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(mid,)).fetchone()
+  state=dict(state_row) if state_row else state
+  events=_load_match_event_rows(c,mid)
+ if not fixture:
+  period="finished" if match.get("status")=="finished" else _live_period(state.get("status") or match.get("status_short") or match.get("status"))
+  minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
+  home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
+  away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
+  ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
+  ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+ score=f"{home_score} – {away_score}" if home_score is not None and away_score is not None else None
+ ht_score=f"{ht_home} – {ht_away}" if ht_home is not None and ht_away is not None else None
+ last_updated=state.get("last_success_at") or ""
+ error=state.get("last_error") or ""
+ if events:
+  message=None
+ elif error:
+  message="Canlı olay verisi geçici olarak alınamadı; son kayıtlı bilgiler korunuyor."
+ elif not provider_slug:
+  message="Canlı veri sağlayıcısında bu karşılaşma henüz eşleştirilemedi."
+ else:
+  message="Sağlayıcı bu karşılaşma için henüz olay listesi döndürmedi."
+ return jsonify({
+  "status":period,"minute":minute,"minute_label":_live_minute_label(period,minute),
+  "score":score,"ht_score":ht_score,"events":events,"events_available":bool(events),
+  "last_updated":last_updated,"message":message
+ })
 
 @app.post("/match/<int:mid>/status")
 @admin_required
