@@ -613,13 +613,6 @@ def refresh_results():
       continue
 
      finished+=1
-     # Reuse the already-loaded match row. Only sync prediction rows where
-     # the match actually has saved predictions; most imported historic rows do not.
-     for market,label in MARKETS:
-      prediction=row.get(market)
-      if prediction:
-       c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction",
-        (mid,label,prediction))
      actuals=actual_market_values(fixture)
      actual_by_label={
       label:actuals[market]
