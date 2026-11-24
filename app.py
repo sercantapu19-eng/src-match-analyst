@@ -1597,7 +1597,8 @@ def match_live_data(mid):
      team_fixtures=_cached_sportscore_team_fixtures(provider,mid,team_name)
      live_candidates=[dict(item,status="live") for item in team_fixtures if isinstance(item,dict)]
      resolved=provider.find_matching_live_fixture(
-      live_candidates,match.get("home"),match.get("away"),match.get("kickoff"))
+      live_candidates,match.get("home"),match.get("away"),match.get("kickoff"),
+      allow_missing_identifier=True)
      if resolved:
       combined=dict(resolved)
       for key,value in fixture.items():
@@ -1658,6 +1659,30 @@ def match_live_data(mid):
   away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
   ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
   ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+  # Finished matches may never have been opened while live. Recover their detail
+  # slug from either team's schedule instead of requiring an old live-state slug.
+  if not provider_slug and match.get("status")=="finished":
+   schedule_fetch=getattr(provider,"team_fixtures_for_team",None)
+   if callable(schedule_fetch):
+    for team_name in (match.get("home"),match.get("away")):
+     try:
+      team_fixtures=schedule_fetch(team_name,limit=30)
+     except ProviderError as exc:
+      app.logger.warning("SportScore finished team schedule unavailable for match %s: %s",mid,exc)
+      continue
+     candidates=[dict(item,status="live") for item in team_fixtures if isinstance(item,dict)]
+     resolved=provider.find_matching_live_fixture(
+      candidates,match.get("home"),match.get("away"),match.get("kickoff"),
+      allow_missing_identifier=True)
+     if not resolved:
+      continue
+     provider_slug=str(resolved.get("slug") or resolved.get("id") or "")
+     if not provider_slug:
+      provider_slug=provider.match_slug_from_teams(match.get("home"),match.get("away")) or ""
+     if provider_slug:
+      app.logger.info("SportScore finished match slug recovered from team schedule: match_id=%s slug=%s",
+       mid,provider_slug)
+      break
  if provider_slug:
   claimed,state=_claim_match_event_refresh(mid,provider_slug)
   if claimed:
