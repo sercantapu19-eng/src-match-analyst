@@ -40,3 +40,12 @@ def actual_market_values(match):
 def evaluate_prediction(prediction, actual):
     """Return won/lost for a comparable, source-backed market selection."""
     return "won" if str(prediction or "").strip().casefold() == str(actual or "").strip().casefold() else "lost"
+
+
+def prefer_saved_match(candidates):
+    """Prefer the user's original saved row when provider sync created duplicates."""
+    rows = list(candidates or [])
+    for row in rows:
+        if row.get("is_saved"):
+            return row
+    return rows[0] if len(rows) == 1 else None
