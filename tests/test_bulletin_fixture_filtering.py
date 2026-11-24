@@ -36,6 +36,27 @@ class BulletinFixtureFilteringTests(unittest.TestCase):
                 (home, away, league, kickoff.isoformat(), status, "test", "sportscore", "")
             )
 
+    def test_homepage_loads_with_live_match_minute_stored_as_text(self):
+        kickoff = self.now - timedelta(minutes=17)
+        with application.db() as conn:
+            conn.execute(
+                """INSERT INTO matches(
+                    home,away,league,kickoff,status,created_at,provider,external_id,
+                    home_goals,away_goals,ht_home,ht_away,elapsed_minute,status_short
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "Chattogram City FC", "Brothers Union", "Test League",
+                    kickoff.isoformat(), "live", "test", "sportscore", "live-1",
+                    1, 0, 0, 0, "76", "2H"
+                ),
+            )
+        response = self.client.get("/?date=" + self.day + "&view=live")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Chattogram City FC", html)
+        self.assertIn("Brothers Union", html)
+        self.assertIn("76", html)
+
     def test_past_kickoffs_are_separated_from_upcoming_without_marking_finished(self):
         past = self.now - timedelta(hours=2)
         future = self.now + timedelta(hours=2)
