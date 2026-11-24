@@ -1559,6 +1559,103 @@ def new_match():
   return redirect(url_for("index"))
  return render_template("form.html",data={})
 
+def _coupon_selection_label(market_key, selection_key):
+ labels={"match_result":{"1":"MS 1","X":"MS X","2":"MS 2"},
+  "goals":{"over":"Üst 2,5","under":"Alt 2,5"},
+  "btts":{"Var":"KG Var","Yok":"KG Yok"}}
+ if market_key in labels and selection_key in labels[market_key]:
+  return labels[market_key][selection_key]
+ if market_key=="htft": return "İY/MS "+selection_key
+ if market_key=="first_half_btts": return "İY KG "+selection_key
+ if market_key=="second_half_btts": return "2. Yarı KG "+selection_key
+ return selection_key
+
+
+@app.post("/coupon/draft/add")
+@login_required
+def add_coupon_draft_item():
+ mid=request.form.get("match_id",type=int)
+ market_key=(request.form.get("market_key") or "").strip()
+ selection_key=(request.form.get("selection_key") or "").strip()
+ allowed={"match_result","goals","btts","htft","first_half_btts","second_half_btts"}
+ if not mid or market_key not in allowed or not selection_key:
+  return jsonify({"ok":False,"error":"Geçersiz kupon seçimi."}),400
+ uid=current_user_id()
+ with db() as c:
+  match=c.execute("SELECT id,home,away,market_probabilities FROM matches WHERE id=?",(mid,)).fetchone()
+  if not match:return jsonify({"ok":False,"error":"Maç bulunamadı."}),404
+  try: probs=json.loads(match["market_probabilities"] or "{}")
+  except (TypeError,ValueError): probs={}
+  market_data=probs.get(market_key) or {}
+  if market_key=="goals": market_data=market_data.get("2.5") or {}
+  if selection_key not in market_data:
+   return jsonify({"ok":False,"error":"Bu bahis seçimi için doğrulanmış tahmin bulunamadı."}),400
+  draft_id=session.get("coupon_draft_id")
+  draft=c.execute("SELECT id FROM user_coupons WHERE id=? AND user_id=? AND status='draft'",(draft_id,uid)).fetchone() if draft_id else None
+  if not draft:
+   cur=c.execute("INSERT INTO user_coupons(user_id,name,status,created_at) VALUES(?,?,?,?) RETURNING id",
+    (uid,"Taslak kupon","draft",datetime.utcnow().isoformat()))
+   draft_id=cur.fetchone()["id"]
+   session["coupon_draft_id"]=draft_id
+  c.execute("""INSERT INTO user_coupon_items(coupon_id,match_id,market_key,selection_key,created_at)
+   VALUES(?,?,?,?,?) ON CONFLICT(coupon_id,match_id,market_key,selection_key) DO NOTHING""",
+   (draft_id,mid,market_key,selection_key,datetime.utcnow().isoformat()))
+  count=c.execute("SELECT COUNT(*) FROM user_coupon_items WHERE coupon_id=?",(draft_id,)).fetchone()[0]
+ return jsonify({"ok":True,"added":True,"draft_count":count,"draft_url":url_for("coupon_draft")})
+
+
+@app.get("/coupon/draft")
+@login_required
+def coupon_draft():
+ draft_id=session.get("coupon_draft_id")
+ with db() as c:
+  draft=c.execute("SELECT * FROM user_coupons WHERE id=? AND user_id=? AND status='draft'",(draft_id,current_user_id())).fetchone() if draft_id else None
+  items=c.execute("""SELECT i.id AS item_id,m.id,m.home,m.away,m.league,m.kickoff,m.status,m.home_goals,m.away_goals,
+    i.market_key,i.selection_key FROM user_coupon_items i JOIN matches m ON m.id=i.match_id
+    WHERE i.coupon_id=? ORDER BY i.id""",(draft_id,)).fetchall() if draft else []
+ return render_template("coupon_draft.html",draft=draft,items=items)
+
+
+@app.post("/coupon/draft/remove/<int:item_id>")
+@login_required
+def remove_coupon_draft_item(item_id):
+ draft_id=session.get("coupon_draft_id")
+ with db() as c:
+  c.execute("""DELETE FROM user_coupon_items WHERE id=? AND coupon_id IN
+   (SELECT id FROM user_coupons WHERE id=? AND user_id=? AND status='draft')""",
+   (item_id,draft_id,current_user_id()))
+ return redirect(url_for("coupon_draft"))
+
+
+@app.post("/coupon/save")
+@login_required
+def save_coupon():
+ name=(request.form.get("name") or "").strip()
+ if not name or len(name)>80:
+  flash("Kupon adı 1–80 karakter arasında olmalı.","error")
+  return redirect(url_for("coupon_draft"))
+ draft_id=session.get("coupon_draft_id")
+ with db() as c:
+  draft=c.execute("""SELECT id FROM user_coupons WHERE id=? AND user_id=? AND status='draft'""",
+   (draft_id,current_user_id())).fetchone() if draft_id else None
+  if not draft or c.execute("SELECT COUNT(*) FROM user_coupon_items WHERE coupon_id=?",(draft_id,)).fetchone()[0]==0:
+   flash("Kaydetmek için kuponda en az bir bahis seçimi olmalı.","error")
+   return redirect(url_for("coupon_draft"))
+  c.execute("UPDATE user_coupons SET name=?,status='saved',saved_at=? WHERE id=? AND user_id=?",
+   (name,datetime.utcnow().isoformat(),draft_id,current_user_id()))
+ session.pop("coupon_draft_id",None)
+ flash("Kupon kayıtlı kuponlarına eklendi.","success")
+ return redirect(url_for("saved"))
+
+
+@app.post("/coupon/<int:coupon_id>/delete")
+@login_required
+def delete_coupon(coupon_id):
+ with db() as c:
+  c.execute("DELETE FROM user_coupons WHERE id=? AND user_id=? AND status='saved'",(coupon_id,current_user_id()))
+ return redirect(url_for("saved"))
+
+
 @app.post("/match/<int:mid>/save-prediction")
 @login_required
 def save_prediction(mid):
@@ -2019,9 +2116,21 @@ def saved():
         (sp.market_key='first_half_btts' AND r.market='1. Yarı KG') OR
         (sp.market_key='second_half_btts' AND r.market='2. Yarı KG'))
       WHERE sp.user_id=? ORDER BY sp.saved_at DESC""",(uid,)).fetchall()
+  coupons=c.execute("SELECT * FROM user_coupons WHERE user_id=? AND status='saved' ORDER BY saved_at DESC,id DESC",(uid,)).fetchall()
+  coupon_items={}
+  for coupon in coupons:
+   coupon_items[coupon["id"]]=c.execute("""SELECT i.id AS item_id,m.id,m.home,m.away,m.league,m.kickoff,m.status,
+    m.home_goals,m.away_goals,i.market_key,i.selection_key,r.outcome,r.actual,r.prediction
+    FROM user_coupon_items i JOIN matches m ON m.id=i.match_id
+    LEFT JOIN results r ON r.match_id=m.id AND r.market=CASE i.market_key
+     WHEN 'match_result' THEN 'Maç Sonucu' WHEN 'goals' THEN '2,5 Gol' WHEN 'btts' THEN 'KG'
+     WHEN 'htft' THEN 'İY/MS' WHEN 'first_half_btts' THEN '1. Yarı KG'
+     WHEN 'second_half_btts' THEN '2. Yarı KG' ELSE '' END
+    WHERE i.coupon_id=? ORDER BY i.id""",(coupon["id"],)).fetchall()
  results_by_match={}
  for row in rows: results_by_match.setdefault(row["match_id"],[]).append(dict(row))
- return render_template("saved.html",matches=ms,results_by_match=results_by_match,selected_predictions=selected)
+ return render_template("saved.html",matches=ms,results_by_match=results_by_match,selected_predictions=selected,
+  coupons=coupons,coupon_items=coupon_items)
 def _goal_side_label(market, selection):
  """Hide repeated goal-line value in selection labels on the results screen."""
  market_key="".join(str(market or "").casefold().replace(",",".").split())
