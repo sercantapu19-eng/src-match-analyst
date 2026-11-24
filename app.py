@@ -1584,7 +1584,8 @@ def match_live_data(mid):
     match_day=kickoff_text[:10] if len(kickoff_text)>=10 else ""
     date_fixtures=_cached_sportscore_date_fixtures(provider,match_day)
     fixture=provider.find_matching_live_fixture(
-     date_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
+     date_fixtures,match.get("home"),match.get("away"),match.get("kickoff"),
+     allow_missing_identifier=True)
     if fixture:
      app.logger.info("SportScore live fixture matched via date feed: match_id=%s provider_id=%s",
       mid,fixture.get("id") or fixture.get("slug"))
