@@ -230,6 +230,8 @@ class FootballProvider:
                     return None
             output.append({
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
+                "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
+                "provider_id": str(self.pick(item, "id", "fixture_id", "match_id", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "kickoff": self.local_kickoff(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),
@@ -453,6 +455,20 @@ class FootballProvider:
             if self.is_current_live_fixture(fixture)
         ]
 
+
+
+    def find_live_fixture(self, fixtures, home_name, away_name):
+        """Return a unique live-feed match using both normalized team names."""
+        home_key = self._normalize_search_name(home_name)
+        away_key = self._normalize_search_name(away_name)
+        matches = [
+            fixture for fixture in fixtures
+            if fixture.get("status") == "live"
+            and self._normalize_search_name(fixture.get("home")) == home_key
+            and self._normalize_search_name(fixture.get("away")) == away_key
+            and fixture.get("slug")
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     @staticmethod
     def parse_match_events(payload):
