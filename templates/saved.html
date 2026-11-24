@@ -13,7 +13,12 @@
  {% set match_results = results_by_match.get(m.id, []) %}
  {% if match_results %}<div class="result-list"><strong>Tahmin sonuçları</strong>
  {% for r in match_results %}<p>{{r.market}}: {{r.prediction}} → {{r.actual or "Sonuç bekleniyor"}} · {% if r.outcome=="won" %}<strong>Kazandı</strong>{% elif r.outcome=="lost" %}<strong>Kaybetti</strong>{% else %}Bekliyor{% endif %}</p>{% endfor %}
- </div>{% endif %}
+ </div>
+ {% elif m.status=="finished" %}
+ <div class="result-list"><strong>Tahmin değerlendirmesi yapılamadı</strong>
+ <p>{{m.prediction_message or "Bu maç için maç öncesinde kayıtlı bir pazar tahmini bulunmuyor. Sonradan tahmin üretilmediği için kazanma/kaybetme hesabı yapılmadı."}}</p>
+ </div>
+ {% endif %}
  <div class="detail-actions"><a class="button" href="/match/{{m.id}}">Maç analizini aç →</a><form method="post" action="/match/{{m.id}}/unsave"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="button secondary" type="submit">Listemden çıkar</button></form></div>
 </section>
 {% else %}
