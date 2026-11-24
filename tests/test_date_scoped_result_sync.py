@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
@@ -83,6 +83,83 @@ class DateScopedResultSyncTests(unittest.TestCase):
             json={},
         )
         self.assertEqual(response.status_code, 400)
+
+
+    def test_existing_finished_match_is_updated_without_a_duplicate(self):
+        yesterday = (
+            datetime.now(ZoneInfo("Europe/Istanbul")).date() - timedelta(days=1)
+        ).isoformat()
+        kickoff = f"{yesterday}T18:00:00+03:00"
+        with application.db() as c:
+            cur = c.execute(
+                """INSERT INTO matches(
+                    home,away,league,kickoff,status,created_at,provider,external_id,
+                    match_result,over25
+                ) VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING id""",
+                (
+                    "Home FC", "Away FC", "Test League", kickoff, "finished",
+                    "test", "sportscore", "", "MS 1", "Alt 2,5"
+                ),
+            )
+            match_id = cur.fetchone()["id"]
+
+        class FakeProvider:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            @staticmethod
+            def _normalize_search_name(value):
+                return " ".join(str(value or "").casefold().replace("fc", "").split())
+
+            def fixtures(self, day):
+                if day != yesterday:
+                    return []
+                return [{
+                    "id": "provider-finished-id",
+                    "home": "Home FC",
+                    "away": "Away FC",
+                    "league": "Test League",
+                    "kickoff": kickoff,
+                    "status": "finished",
+                    "status_short": "FT",
+                    "home_goals": 2,
+                    "away_goals": 0,
+                    "ht_home": 1,
+                    "ht_away": 0,
+                }]
+
+        with patch.object(application, "FootballProvider", FakeProvider):
+            response = self.client.post(
+                f"/sync/results/refresh?date={yesterday}",
+                headers={"Authorization": "Bearer date-sync-test-token"},
+                json={},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["matched"], 1)
+        self.assertEqual(payload["finished"], 1)
+        self.assertEqual(payload["evaluated_markets"], 2)
+        with application.db() as c:
+            match = c.execute(
+                "SELECT id,home_goals,away_goals,status FROM matches WHERE id=?",
+                (match_id,),
+            ).fetchone()
+            count = c.execute(
+                "SELECT COUNT(*) FROM matches WHERE substr(kickoff,1,10)=?",
+                (yesterday,),
+            ).fetchone()[0]
+            outcomes = c.execute(
+                "SELECT market,actual,outcome FROM results WHERE match_id=? ORDER BY market",
+                (match_id,),
+            ).fetchall()
+        self.assertEqual(match["status"], "finished")
+        self.assertEqual((match["home_goals"], match["away_goals"]), (2, 0))
+        self.assertEqual(count, 1)
+        self.assertEqual(
+            [(row["actual"], row["outcome"]) for row in outcomes],
+            [("Alt 2,5", "won"), ("MS 1", "won")],
+        )
 
 
 if __name__ == "__main__":
