@@ -131,6 +131,8 @@ class LiveEventCacheRouteTests(unittest.TestCase):
                  "related_event_id": "goal-1", "detail": "Ofsayt nedeniyle gol iptal edildi"},
             ]
         })
+        cancellation = next(event for event in events if event["kind"] == "goal_cancelled")
+        self.assertEqual(cancellation["related_event_uid"], "sportscore:goal-1")
         application._store_match_events(self.match_id, events, "Alpha FC", "Beta FC")
         application._store_match_events(self.match_id, events, "Alpha FC", "Beta FC")
         with application.db() as conn:
