@@ -297,5 +297,27 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(events[5]["detail"],"↓ Shoji Fujio  ↑ Mao Hosoya")
         self.assertEqual(events[7]["label"],"İkinci yarı başladı")
 
+    def test_live_fixture_match_uses_unique_exact_home_away_and_kickoff(self):
+        fixtures = [
+            {"id":"newcastle-jets-vs-kashiwa", "home":"Newcastle United Jets",
+             "away":"Kashiwa Reysol", "status":"live",
+             "kickoff":"2026-11-24T10:45:00+03:00", "elapsed_minute":76},
+            {"id":"other-match", "home":"Newcastle", "away":"Kashiwa",
+             "status":"live", "kickoff":"2026-11-24T10:45:00+03:00"}
+        ]
+        found = FootballProvider.find_matching_live_fixture(
+            fixtures, "Newcastle United Jets", "Kashiwa Reysol",
+            "2026-11-24T10:45:00+03:00")
+        self.assertEqual(found["id"], "newcastle-jets-vs-kashiwa")
+        self.assertEqual(found["elapsed_minute"], 76)
+
+    def test_live_fixture_match_refuses_ambiguous_exact_pair_without_kickoff(self):
+        fixtures = [
+            {"id":"a", "home":"Newcastle Jets", "away":"Kashiwa Reysol", "status":"live"},
+            {"id":"b", "home":"Newcastle Jets", "away":"Kashiwa Reysol", "status":"live"}
+        ]
+        self.assertIsNone(FootballProvider.find_matching_live_fixture(
+            fixtures, "Newcastle Jets", "Kashiwa Reysol"))
+
 if __name__ == "__main__":
     unittest.main()
