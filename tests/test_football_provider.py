@@ -232,6 +232,7 @@ class FootballProviderTests(unittest.TestCase):
         })
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["id"], "basaksehir-vs-corum")
+        self.assertEqual(rows[0]["slug"], "basaksehir-vs-corum")
         self.assertEqual(rows[0]["status"], "finished")
         self.assertEqual(rows[0]["home_goals"], 2)
         self.assertEqual(rows[0]["away_goals"], 1)

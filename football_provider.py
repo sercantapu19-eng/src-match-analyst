@@ -230,6 +230,7 @@ class FootballProvider:
                     return None
             output.append({
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
+                "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "kickoff": self.local_kickoff(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),

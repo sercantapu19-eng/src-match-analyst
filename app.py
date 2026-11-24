@@ -1061,7 +1061,8 @@ def match_live_data(mid):
      f"{match['home_goals']} – {match['away_goals']}" if match["home_goals"] is not None else None),
     "ht_score":None,"events":[],"events_available":False,
     "message":"Bu karşılaşma canlı veri akışında tekil olarak eşleştirilemedi."})
-  payload=provider.match_detail(fixture["id"])
+  provider_slug=fixture.get("slug") or fixture.get("id")
+  payload=provider.match_detail(provider_slug)
   events=provider.parse_match_events(payload)
   minute=fixture.get("elapsed_minute")
   code=str(fixture.get("status_short") or "").upper().replace(" ","_")
