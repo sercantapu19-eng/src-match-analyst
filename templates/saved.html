@@ -2,27 +2,32 @@
 <nav class="detail-actions"><a class="button secondary" href="/">← Bültene dön</a></nav>
 <section class="hero saved-hero"><div><div class="eyebrow">SRC MATCH ANALYST · KİŞİSEL LİSTEN</div><h1>Kaydedilen maçlar</h1><p>Yalnızca bu hesapta kaydettiğin maçlar görünür.</p></div><div class="stats"><div><b>{{matches|length}}</b><small>Kayıtlı maç</small></div></div></section>
 {% if selected_predictions %}
-<section class="panel saved-match">
- <h2>Kaydettiğim tahminler</h2>
- <p class="muted">Yalnızca seçtiğin pazar tahminleri burada listelenir.</p>
+<section class="panel saved-match saved-predictions-panel">
+ <div class="saved-section-heading"><div><h2>Kaydettiğim tahminler</h2><p class="muted">Yalnızca seçtiğin pazar tahminleri burada listelenir.</p></div><span class="saved-section-count">{{selected_predictions|length}} tahmin</span></div>
+ <div class="saved-predictions-grid">
  {% for p in selected_predictions %}
- <div class="saved-prediction-row">
-  <strong>{{p.home|team_display}} – {{p.away|team_display}}</strong>
-  <p>{{p.league}} · {{p.kickoff[:10] if p.kickoff else "—"}} {{p.kickoff[11:16] if p.kickoff and p.kickoff|length >= 16 else ""}}</p>
-  <p>{{p.market_key}} · {{p.selection_key}}</p>
-  {% if p.outcome=="won" %}<span class="result-won">✓ Kazandı</span>
-  {% elif p.outcome=="lost" %}<span class="result-lost">✕ Kaybetti</span>
-  {% elif p.status=="finished" %}<span class="result-pending">Sonuç değerlendirilemedi</span>
-  {% else %}<span class="result-pending">⏳ Bekliyor</span>{% endif %}
-  <a href="/match/{{p.id}}">Maç analizi →</a>
- </div>
+ <article class="saved-prediction-card">
+  <strong class="saved-card-teams">{{p.home|team_display}} – {{p.away|team_display}}</strong>
+  <p class="saved-card-meta">{{p.league}} · {{p.kickoff[:10] if p.kickoff else "—"}} {{p.kickoff[11:16] if p.kickoff and p.kickoff|length >= 16 else ""}}</p>
+  <p class="saved-card-market">{{p.market_key}} · {{p.selection_key}}</p>
+  <div class="saved-card-footer">
+   {% if p.outcome=="won" %}<span class="result-won">✓ Kazandı</span>
+   {% elif p.outcome=="lost" %}<span class="result-lost">✕ Kaybetti</span>
+   {% elif p.status=="finished" %}<span class="result-pending">Sonuç değerlendirilemedi</span>
+   {% else %}<span class="result-pending">⏳ Bekliyor</span>{% endif %}
+   <a href="/match/{{p.id}}">Maç analizi →</a>
+  </div>
+ </article>
  {% endfor %}
+ </div>
 </section>
 {% endif %}
+{% if matches %}
+<section class="saved-matches-grid" aria-label="Kaydedilen maçlar">
 {% for m in matches %}
-<section class="panel saved-match">
+<article class="panel saved-match saved-match-card">
  <h2>{{m.home|team_display}} – {{m.away|team_display}}</h2>
- <p>{{m.kickoff}} · {{m.league}}</p>
+ <p class="saved-card-meta">{{m.kickoff}} · {{m.league}}</p>
  <p><strong>Durum:</strong> {{ "Tamamlandı" if m.status=="finished" else "Canlı" if m.status=="live" else "Başlamadı" }}</p>
  {% if m.status=="finished" and m.home_goals is not none and m.away_goals is not none %}
  <p><strong>Gerçek skor:</strong> {{m.home_goals}} – {{m.away_goals}}</p>
@@ -45,10 +50,10 @@
  </div>
  {% endif %}
  <div class="detail-actions"><a class="button" href="/match/{{m.id}}">Maç analizini aç →</a><form method="post" action="/match/{{m.id}}/unsave"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="button secondary" type="submit">Listemden çıkar</button></form></div>
+</article>
+{% endfor %}
 </section>
-{% else %}
-{% if not selected_predictions %}
+{% elif not selected_predictions %}
 <section class="empty"><h2>Henüz kayıtlı maç veya tahmin yok</h2><p>Kupon Analiz Merkezi'nde kaydettiğin tahminler ve bültende kaydettiğin maçlar burada görünür.</p><a class="button" href="/coupon">Kupon Analiz Merkezi'ne git</a></section>
 {% endif %}
-{% endfor %}
 {% endblock %}
