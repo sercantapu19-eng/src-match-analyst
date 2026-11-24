@@ -325,6 +325,25 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(events[5]["detail"],"↓ Shoji Fujio  ↑ Mao Hosoya")
         self.assertEqual(events[7]["label"],"İkinci yarı başladı")
 
+    def test_goal_event_extracts_nested_scorer_assist_and_team(self):
+        events = FootballProvider.parse_match_events({
+            "match": {"events": [{
+                "minute": 34,
+                "type": "goal",
+                "player": {"id": "p1", "firstName": "Moussa", "lastName": "Diallo"},
+                "assist": {"player": {"name": "Ibrahima Sarr"}},
+                "team": {"name": "ASFA Dakar"},
+                "team_side": "home",
+            }]}
+        })
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["primary_player"], "Moussa Diallo")
+        self.assertEqual(events[0]["secondary_player"], "Ibrahima Sarr")
+        self.assertEqual(events[0]["team"], "ASFA Dakar")
+        self.assertEqual(events[0]["team_side"], "home")
+        self.assertIn("Moussa Diallo", events[0]["detail"])
+        self.assertIn("Asist: Ibrahima Sarr", events[0]["detail"])
+
     def test_live_fixture_match_uses_unique_exact_home_away_and_kickoff(self):
         fixtures = [
             {"id":"newcastle-jets-vs-kashiwa", "home":"Newcastle United Jets",

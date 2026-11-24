@@ -775,8 +775,25 @@ class FootballProvider:
 
         def person_name(value):
             if isinstance(value, dict):
-                return str(FootballProvider.pick(value, "name", "display_name", "displayName", "short_name", default="") or "")
-            return str(value or "")
+                direct = FootballProvider.pick(
+                    value, "display_name", "displayName", "full_name", "fullName",
+                    "short_name", "shortName", "name", "player_name", "playerName",
+                    "scorer_name", "scorerName", default=""
+                )
+                if direct not in (None, "") and not isinstance(direct, (dict, list)):
+                    return str(direct).strip()
+                first = FootballProvider.pick(value, "first_name", "firstName", "given_name", "givenName", default="")
+                last = FootballProvider.pick(value, "last_name", "lastName", "family_name", "familyName", default="")
+                if first or last:
+                    return " ".join(str(part).strip() for part in (first, last) if part)
+                for key in ("player", "athlete", "person", "participant", "scorer", "member"):
+                    nested = value.get(key)
+                    if isinstance(nested, (dict, str)):
+                        name = person_name(nested)
+                        if name:
+                            return name
+                return ""
+            return str(value or "").strip()
 
         for item in rows:
             raw_type = str(FootballProvider.pick(
@@ -854,8 +871,15 @@ class FootballProvider:
             elif base_minute is not None:
                 minute_text = str(base_minute)
 
-            player = person_name(FootballProvider.pick(item, "player", "player_name", "playerName", "scorer", "athlete", default=""))
-            assist = person_name(FootballProvider.pick(item, "assist", "assist_player", "assistName", "assisted_by", default=""))
+            player = person_name(FootballProvider.pick(
+                item, "player", "player_name", "playerName", "scorer", "scorer_name",
+                "scorerName", "goal_scorer", "goalScorer", "athlete", "participant",
+                "person", "player_details", "playerDetails", default=""
+            ))
+            assist = person_name(FootballProvider.pick(
+                item, "assist", "assist_player", "assistName", "assisted_by",
+                "assistedBy", "assist_player_name", "assistPlayerName", default=""
+            ))
             team_value = FootballProvider.pick(item, "team", "team_name", "teamName", "team_side", "side", default="")
             team = person_name(team_value)
             incoming = person_name(FootballProvider.pick(item, "player_in", "playerIn", "in_player", "sub_in", "incoming_player", default=""))
