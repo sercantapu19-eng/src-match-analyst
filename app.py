@@ -15,6 +15,16 @@ if (os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production") and l
 app.secret_key=secret_key or secrets.token_urlsafe(48)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production"))
 
+def _is_placeholder_team_name(value):
+ import re
+ text=str(value or "").strip()
+ if not text:
+  return False
+ if text.casefold() in {"tea","tbd","tba","unknown","unknown team","team unknown","team not found","to be announced","n/a"}:
+  return True
+ return bool(re.fullmatch(r"(?i)team[\\s:_-]+[a-z0-9][a-z0-9_-]{7,}",text))
+
+
 def csrf_token():
  token=session.get("_csrf_token")
  if not token:
@@ -28,7 +38,7 @@ def inject_template_security():
 
 @app.template_filter("team_display")
 def team_display(value):
- if FootballProvider.is_placeholder_team_name(value):
+ if _is_placeholder_team_name(value):
   return "Takım adı doğrulanamadı"
  return str(value or "Takım adı belirtilmedi")
 
