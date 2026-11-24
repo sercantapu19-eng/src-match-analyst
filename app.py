@@ -1634,7 +1634,7 @@ def match_live_data(mid):
       if resolved_slug:
        fixture=dict(fixture)
        fixture["slug"]=resolved_slug
-         app.logger.info("SportScore match slug verified from team names: match_id=%s slug=%s",
+       app.logger.info("SportScore match slug verified from team names: match_id=%s slug=%s",
         mid,resolved_slug)
       else:
        _finish_match_event_refresh(mid,error="SportScore eşleşen maç detayını takım adlarıyla doğrulayamadı.")
