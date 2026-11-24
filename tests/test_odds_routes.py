@@ -14,6 +14,7 @@ class OddsRouteTests(unittest.TestCase):
         self.old_database_url = os.environ.pop("DATABASE_URL", None)
         self.old_env_db_path = os.environ.get("DATABASE_PATH")
         self.old_api_key = os.environ.pop("API_FOOTBALL_KEY", None)
+        self.old_daily_budget = os.environ.pop("API_FOOTBALL_DAILY_BUDGET", None)
         self.db_path = os.path.join(self.tempdir.name, "odds-test.db")
         os.environ["DATABASE_PATH"] = self.db_path
         application.DB_PATH = self.db_path
@@ -37,6 +38,8 @@ class OddsRouteTests(unittest.TestCase):
             os.environ["DATABASE_PATH"] = self.old_env_db_path
         if self.old_api_key is not None:
             os.environ["API_FOOTBALL_KEY"] = self.old_api_key
+        if self.old_daily_budget is not None:
+            os.environ["API_FOOTBALL_DAILY_BUDGET"] = self.old_daily_budget
         self.tempdir.cleanup()
 
     def test_missing_api_key_returns_clear_unconfigured_state(self):
