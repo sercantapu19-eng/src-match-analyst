@@ -211,7 +211,7 @@ class LiveEventCacheRouteTests(unittest.TestCase):
                     "home": "Alpha FC", "away": "Beta FC", "status": "scheduled",
                     "status_short": "NS", "elapsed_minute": None,
                     "home_goals": None, "away_goals": None,
-                    "kickoff": "2026-11-24T18:00:00+03:00",
+                    "kickoff": date.today().isoformat() + "T18:00:00+03:00",
                 }]
 
             def match_detail(self, slug):
