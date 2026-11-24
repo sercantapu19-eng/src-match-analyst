@@ -206,7 +206,7 @@ class LiveEventCacheRouteTests(unittest.TestCase):
             def team_fixtures_for_team(self, team_name, limit=30):
                 type(self).team_schedule_calls += 1
                 return [{
-                    "id": "", "slug": "alpha-fc-vs-beta-fc/test-live-slug",
+                    "id": "", "slug": "",
                     "home": "Alpha FC", "away": "Beta FC", "status": "scheduled",
                     "status_short": "NS", "elapsed_minute": None,
                     "home_goals": None, "away_goals": None,
@@ -235,7 +235,53 @@ class LiveEventCacheRouteTests(unittest.TestCase):
                 "SELECT provider_slug FROM match_live_state WHERE match_id=?",
                 (self.match_id,),
             ).fetchone()
-        self.assertEqual(state["provider_slug"], "alpha-fc-vs-beta-fc/test-live-slug")
+        self.assertEqual(state["provider_slug"], "alpha-fc-vs-beta-fc")
+
+    def test_finished_match_recovers_missing_slug_from_team_schedule(self):
+        with application.db() as conn:
+            conn.execute("UPDATE matches SET status='finished',status_short='FT' WHERE id=?",
+                         (self.match_id,))
+
+        class FakeProvider:
+            detail_calls = 0
+            _normalize_search_name = staticmethod(FootballProvider._normalize_search_name)
+            find_matching_live_fixture = staticmethod(FootballProvider.find_matching_live_fixture)
+            match_slug_from_teams = staticmethod(FootballProvider.match_slug_from_teams)
+            parse_match_events = staticmethod(FootballProvider.parse_match_events)
+
+            def __init__(self, api_key=None):
+                pass
+
+            def team_fixtures_for_team(self, team_name, limit=30):
+                return [{
+                    "id": "", "slug": "", "home": "Alpha FC", "away": "Beta FC",
+                    "status": "finished", "status_short": "FT",
+                    "kickoff": date.today().isoformat() + "T18:00:00+03:00",
+                }]
+
+            def match_detail(self, slug):
+                type(self).detail_calls += 1
+                self.assertion_slug = slug
+                return {"events": [{
+                    "id": "final-goal", "type": "goal", "minute": 74,
+                    "player": "Final Scorer", "team": "Beta FC",
+                }]}
+
+        with patch.object(application, "FootballProvider", FakeProvider):
+            response = self.client.get(f"/match/{self.match_id}/live-data")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "finished")
+        self.assertEqual(len(payload["events"]), 1)
+        self.assertEqual(payload["events"][0]["primary_player"], "Final Scorer")
+        self.assertEqual(FakeProvider.detail_calls, 1)
+        with application.db() as conn:
+            state = conn.execute(
+                "SELECT provider_slug FROM match_live_state WHERE match_id=?",
+                (self.match_id,),
+            ).fetchone()
+        self.assertEqual(state["provider_slug"], "alpha-fc-vs-beta-fc")
 
     def test_duplicate_event_upsert_and_explicit_var_cancellation_preserve_history(self):
         events = FootballProvider.parse_match_events({
