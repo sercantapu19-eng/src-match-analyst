@@ -609,8 +609,8 @@ class FootballProvider:
                 except (TypeError, ValueError):
                     return None
             output.append({
-                "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
-                "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
+                "id": self.fixture_identity(item)[0] or self.fixture_identity(item)[1],
+                "slug": self.fixture_identity(item)[1],
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "home_team_ref": self.team_reference(home),
                 "away_team_ref": self.team_reference(away),
