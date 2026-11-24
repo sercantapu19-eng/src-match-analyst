@@ -53,7 +53,8 @@ class BulletinFixtureFilteringTests(unittest.TestCase):
         self.assertEqual(unverified.status_code, 200)
         unverified_html = unverified.get_data(as_text=True)
         self.assertIn("Past FC", unverified_html)
-        self.assertIn("Saati geçti · Durumu doğrulanacak", unverified_html)
+        self.assertNotIn("Saati geçti", unverified_html)
+        self.assertNotIn("Saati geçti · doğrulanacak", unverified_html)
         self.assertNotIn("Future FC", unverified_html)
         with application.db() as conn:
             row = conn.execute(
