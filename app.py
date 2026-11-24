@@ -585,13 +585,43 @@ def _live_period(status_short):
  return "live"
 
 
-def _live_minute_label(period, minute):
+def _estimated_live_minute(kickoff, period="live", now=None):
+ """Estimate a live clock from kickoff only when the provider omits its clock.
+
+ The estimate is explicitly labelled approximate in the UI; it is never saved
+ back to the match or live-state tables as provider-confirmed data.
+ """
+ if period in ("halftime", "finished") or not kickoff:
+  return None
+ try:
+  start=datetime.fromisoformat(str(kickoff).replace("Z","+00:00"))
+  if start.tzinfo is None:
+   start=start.replace(tzinfo=timezone.utc)
+  current=now or datetime.now(timezone.utc)
+  if current.tzinfo is None:
+   current=current.replace(tzinfo=timezone.utc)
+  elapsed=int((current.astimezone(timezone.utc)-start.astimezone(timezone.utc)).total_seconds()//60)
+ except (TypeError,ValueError,OverflowError):
+  return None
+ if elapsed < 0 or elapsed > 150:
+  return None
+ # A normal halftime interval is not playing time. For generic LIVE feeds,
+ # account for a conventional 15-minute interval after the first 45 minutes.
+ if period == "second_half" or (period == "live" and elapsed > 60):
+  elapsed -= 15
+ elif period == "live" and 45 < elapsed <= 60:
+  elapsed = 45
+ return max(0,min(elapsed,120))
+
+
+def _live_minute_label(period, minute, approximate=False):
  if period=="halftime":
   return "Devre Arası"
  if period=="finished":
   return "Maç Tamamlandı"
  if minute not in (None,""):
-  return f"{minute}′ · {'2. Yarı' if period=='second_half' else '1. Yarı' if period=='first_half' else 'Canlı'}"
+  prefix="≈" if approximate else ""
+  return f"{prefix}{minute}′ · {'2. Yarı' if period=='second_half' else '1. Yarı' if period=='first_half' else 'Canlı'}"
  return "2. Yarı" if period=="second_half" else "1. Yarı" if period=="first_half" else "Canlı dakika bekleniyor"
 
 
@@ -1634,12 +1664,18 @@ def match_live_data(mid):
   period="finished" if match.get("status")=="finished" else _live_period(
    state.get("status") or match.get("status_short") or match.get("status"))
   minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
+  minute_approximate=False
+  if minute in (None,""):
+   estimated=_estimated_live_minute(match.get("kickoff"),period)
+   if estimated is not None:
+    minute=estimated
+    minute_approximate=True
   home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
   away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
   ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
   ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
   return jsonify({
-   "status":period,"minute":minute,"minute_label":_live_minute_label(period,minute),
+   "status":period,"minute":minute,"minute_label":_live_minute_label(period,minute,minute_approximate),
    "score":f"{home_score} – {away_score}" if home_score is not None and away_score is not None else None,
    "ht_score":f"{ht_home} – {ht_away}" if ht_home is not None and ht_away is not None else None,
    "events":saved_events,"events_available":bool(saved_events),
@@ -1784,6 +1820,12 @@ def match_live_data(mid):
   away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
   ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
   ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+ minute_approximate=False
+ if minute in (None,""):
+  estimated=_estimated_live_minute(match.get("kickoff"),period)
+  if estimated is not None:
+   minute=estimated
+   minute_approximate=True
  score=f"{home_score} – {away_score}" if home_score is not None and away_score is not None else None
  ht_score=f"{ht_home} – {ht_away}" if ht_home is not None and ht_away is not None else None
  last_updated=state.get("last_success_at") or ""
@@ -1797,7 +1839,7 @@ def match_live_data(mid):
  else:
   message="Sağlayıcı bu karşılaşma için henüz olay listesi döndürmedi."
  return jsonify({
-  "status":period,"minute":minute,"minute_label":_live_minute_label(period,minute),
+  "status":period,"minute":minute,"minute_label":_live_minute_label(period,minute,minute_approximate),
   "score":score,"ht_score":ht_score,"events":events,"events_available":bool(events),
   "last_updated":last_updated,"message":message
  })
