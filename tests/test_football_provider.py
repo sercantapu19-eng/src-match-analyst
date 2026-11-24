@@ -279,5 +279,23 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual([row["elapsed_minute"] for row in rows], [28, 37, "45+3", 71])
         self.assertEqual([row["status"] for row in rows], ["live"] * 4)
 
+
+    def test_match_timeline_normalizes_common_football_events(self):
+        payload={"match":{"timeline":[
+            {"minute":7,"type":"goal","player":{"name":"Yamauchi, Hinata"},"team":{"name":"Kashiwa"}},
+            {"minute":9,"type":"corner"},
+            {"minute":44,"type":"yellow_card","player":"Max Burgess"},
+            {"minute":45,"type":"half_time"},
+            {"minute":51,"type":"offside","player":"Player A"},
+            {"minute":64,"type":"substitution","player_in":{"name":"Mao Hosoya"},"player_out":{"name":"Shoji Fujio"}},
+            {"minute":70,"type":"red_card","player":"Player B"},
+            {"minute":76,"type":"second_half"}
+        ]}}
+        events=FootballProvider.parse_match_events(payload)
+        self.assertEqual([e["kind"] for e in events],["goal","corner","yellow_card","halftime","offside","substitution","red_card","second_half"])
+        self.assertEqual(events[0]["detail"],"Yamauchi, Hinata")
+        self.assertEqual(events[5]["detail"],"↓ Shoji Fujio  ↑ Mao Hosoya")
+        self.assertEqual(events[7]["label"],"İkinci yarı başladı")
+
 if __name__ == "__main__":
     unittest.main()

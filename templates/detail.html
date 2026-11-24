@@ -2,6 +2,44 @@
 <nav class="detail-actions"><a class="button secondary" href="/">← Bültene dön</a>{% if session.get('user_id') %}<a class="button secondary" href="/saved">★ Kaydedilen maçlar</a>{% endif %}</nav>
 <p class="eyebrow">{{m.league}} · {{m.kickoff}}</p><h1>{{m.home}} – {{m.away}}</h1>
 <section class="panel"><h2>Maç bilgisi</h2><p><b>Durum:</b> {{ "Canlı" if m.status=="live" else "Tamamlandı" if m.status=="finished" else "Başlamadı" }}</p><p><b>Skor:</b> {{m.home_goals if m.home_goals is not none else "—"}} – {{m.away_goals if m.away_goals is not none else "—"}}</p>{% if m.status=="live" and m.elapsed_minute is not none %}<p><b>Dakika:</b> {{m.elapsed_minute}}'</p>{% endif %}{% if m.ht_home is not none or m.ht_away is not none %}<p><b>İlk yarı:</b> {{m.ht_home if m.ht_home is not none else "—"}} – {{m.ht_away if m.ht_away is not none else "—"}}</p>{% endif %}</section>
+
+{% if m.status == "live" %}
+<section class="panel live-timeline" id="liveTimeline" data-match-id="{{m.id}}">
+ <div class="live-timeline-head"><div><span class="live-pulse"></span><b>CANLI MAÇ ANLATIMI</b></div><strong id="liveMinute">{% if m.elapsed_minute is not none %}{{m.elapsed_minute}}' · Canlı{% elif m.status_short in ('HT','INT','BREAK','BT') %}Devre Arası{% else %}Canlı dakika bekleniyor{% endif %}</strong></div>
+ <div class="live-score-strip"><span id="liveCurrentScore">{{m.home_goals if m.home_goals is not none else '—'}} – {{m.away_goals if m.away_goals is not none else '—'}}</span><span id="liveHalfScore">{% if m.ht_home is not none and m.ht_away is not none %}İlk yarı {{m.ht_home}} – {{m.ht_away}}{% else %}İlk yarı skoru bekleniyor{% endif %}</span></div>
+ <div class="timeline-list" id="timelineEvents" aria-live="polite"><p class="muted timeline-empty">Canlı maç olayları yükleniyor…</p></div>
+ <p class="muted timeline-foot" id="timelineStatus">Olaylar veri sağlayıcının güncel maç akışından alınır.</p>
+</section>
+<style>
+.live-timeline{overflow:hidden}.live-timeline-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.live-timeline-head>div{display:flex;align-items:center;gap:9px;color:#b4232d;letter-spacing:.06em;font-size:.9rem}.live-pulse{width:9px;height:9px;border-radius:50%;background:#d71920;box-shadow:0 0 0 5px #d7192020}.live-timeline-head strong{color:#b4232d}.live-score-strip{display:flex;justify-content:space-between;gap:10px;padding:12px 0;margin:12px 0;border-block:1px solid #e5e7eb;font-weight:700}.timeline-list{position:relative}.timeline-list:before{content:"";position:absolute;left:43px;top:8px;bottom:8px;width:2px;background:#e3e8ee}.timeline-event{position:relative;display:grid;grid-template-columns:34px 22px minmax(0,1fr);gap:10px;padding:12px 0;align-items:start}.timeline-minute{text-align:right;font-weight:700;color:#64748b;font-size:.9rem}.timeline-dot{z-index:1;width:12px;height:12px;border-radius:50%;margin:4px auto;background:#dbeafe;border:2px solid #fff;box-shadow:0 0 0 1px #cbd5e1}.timeline-event[data-kind="goal"] .timeline-dot{background:#16a34a}.timeline-event[data-kind="red_card"] .timeline-dot{background:#dc2626}.timeline-event[data-kind="yellow_card"] .timeline-dot{background:#eab308}.timeline-event[data-kind="halftime"],.timeline-event[data-kind="second_half"],.timeline-event[data-kind="fulltime"]{background:#e5f2ec;border-radius:8px;padding:11px;margin:6px 0}.timeline-copy b{display:block;font-size:.96rem}.timeline-copy small{display:block;color:#64748b;margin-top:3px}.timeline-empty{text-align:center;padding:18px 0}.timeline-foot{font-size:.78rem;margin-bottom:0}@media(max-width:560px){.live-score-strip{font-size:.9rem}.timeline-event{grid-template-columns:32px 20px minmax(0,1fr);gap:8px}}
+</style>
+<script>
+(() => {
+ const root=document.getElementById("liveTimeline");if(!root)return;
+ const id=root.dataset.matchId,list=document.getElementById("timelineEvents");
+ const minute=document.getElementById("liveMinute"),score=document.getElementById("liveCurrentScore");
+ const half=document.getElementById("liveHalfScore"),status=document.getElementById("timelineStatus");
+ const esc=value=>String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+ function render(events){
+  if(!events.length){list.innerHTML='<p class="muted timeline-empty">Bu maç için henüz olay kaydı alınamadı. Sağlayıcı olay yayımladığında burada görünecek.</p>';return;}
+  list.innerHTML=events.map(e=>'<article class="timeline-event" data-kind="'+esc(e.kind)+'"><span class="timeline-minute">'+esc(e.minute_label)+'</span><span class="timeline-dot"></span><div class="timeline-copy"><b>'+esc(e.icon)+' '+esc(e.label)+'</b>'+(e.detail?'<small>'+esc(e.detail)+'</small>':'')+(e.team?'<small>'+esc(e.team)+'</small>':'')+'</div></article>').join("");
+ }
+ async function refresh(){
+  try{
+   const response=await fetch('/match/'+id+'/live-data',{cache:'no-store'}),data=await response.json();
+   if(data.minute_label)minute.textContent=data.minute_label;
+   if(data.score)score.textContent=data.score;
+   if(data.ht_score)half.textContent='İlk yarı '+data.ht_score;
+   render(data.events||[]);
+   status.textContent=data.events_available?'Canlı olaylar güncel veri akışından alınıyor.':(data.message||'Olay akışı henüz sağlayıcıda bulunmuyor.');
+   if(data.status==='finished')minute.textContent='Maç tamamlandı';
+  }catch(_error){status.textContent='Canlı veriye geçici olarak ulaşılamıyor; tekrar denenecek.';}
+ }
+ refresh();window.setInterval(refresh,30000);
+})();
+</script>
+{% endif %}
+
 {% if m.saved %}<form method="post" action="/match/{{m.id}}/unsave"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button secondary">★ Kaydedildi</button></form>{% else %}<form method="post" action="/match/{{m.id}}/save"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">☆ Seçimlerime kaydet</button></form>{% endif %}
 <section class="panel"><h2>Tahminlerimiz · Tüm pazarlar</h2>
 {% if market_probabilities and market_probabilities.get('match_result') %}
