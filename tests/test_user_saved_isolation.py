@@ -163,6 +163,16 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertIn('class="result-outcome result-lost"', page)
         self.assertIn("×", page)
 
+    def test_homepage_has_team_name_search_for_fixture_rows(self):
+        self._login_as(self.user_one, "one@example.com")
+        day = date.today().isoformat()
+        page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn('id="fixtureTeamSearch"', page)
+        self.assertIn('placeholder="Takım adı yaz, maçı bul..."', page)
+        self.assertIn("fixtureSearchStatus", page)
+        self.assertIn("row.querySelector('.team-pair')", page)
+        self.assertIn("Bu takım adına göre maç bulunamadı.", page)
+
     def test_save_returns_to_match_and_detail_has_navigation_links(self):
         self._login_as(self.user_one, "one@example.com")
         response = self._save(self.match_one)
