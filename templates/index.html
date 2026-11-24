@@ -112,7 +112,7 @@
 <script>(()=>{const root=document.getElementById("homeLivePanel");if(!root)return;const id=root.dataset.matchId;const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));async function update(){try{const r=await fetch("/match/"+id+"/live-data",{cache:"no-store"});if(!r.ok)return;const d=await r.json();if(d.minute_label)document.getElementById("homeLiveMinute").textContent=d.minute_label;if(d.score)document.getElementById("homeLiveScore").textContent=d.score;if(d.ht_score)document.getElementById("homeLiveHalf").textContent="İY: "+d.ht_score;const events=d.events||[];document.getElementById("homeLiveEvents").innerHTML=events.length?events.slice(-4).reverse().map(e=>'<div><b>'+esc(e.minute_label)+'</b><span>'+esc(e.icon||"•")+' '+esc(e.label)+'</span></div>').join(""):'<span>'+(d.message?esc(d.message):"Sağlayıcı henüz olay yayımlamadı.")+'</span>'}catch(_){}}update();window.setInterval(update,30000)})();</script>
 {% else %}<section class="live-featured live-featured-empty"><div class="live-featured-head"><span>CANLI MAÇ MERKEZİ</span></div><p>Şu anda canlı karşılaşma bulunmuyor. Canlı maç başladığında skor ve olay akışı burada gösterilecek.</p></section>{% endif %}
 {% if not matches %}<section class="empty"><h2>Bu filtrede maç bulunamadı</h2><p>Seçilen tarih için SportScore fikstür verisi bulunamadı.</p></section>{% else %}
-<section class="fixtures-panel"><div class="fixtures-panel-head"><div><h2>Karşılaşmalar</h2><p>{{day}} · {{matches|length}} maç</p></div><span>● Canlı veriler</span></div><div class="table-wrap src-fixtures-wrap"><table class="src-fixtures"><thead><tr><th>Tarih</th><th>Lig</th><th>Karşılaşma</th><th>İY</th><th>MS</th><th>Durum</th><th></th></tr></thead><tbody>
+<section class="fixtures-panel"><div class="fixtures-panel-head"><div><h2>Karşılaşmalar</h2><p>{{day}} · <span id="fixtureTotalCount">{{matches|length}}</span> maç</p></div><div class="fixtures-panel-tools"><label class="fixture-search" for="fixtureTeamSearch"><span aria-hidden="true">⌕</span><input type="search" id="fixtureTeamSearch" placeholder="Takım adı yaz, maçı bul..." autocomplete="off" aria-label="Takım adına göre maç ara"></label><span class="fixture-live-label">● Canlı veriler</span></div></div><p class="fixture-search-status" id="fixtureSearchStatus" aria-live="polite">{{matches|length}} maç listeleniyor</p><div class="table-wrap src-fixtures-wrap"><table class="src-fixtures"><thead><tr><th>Tarih</th><th>Lig</th><th>Karşılaşma</th><th>İY</th><th>MS</th><th>Durum</th><th></th></tr></thead><tbody>
 {% for m in matches %}<tr data-match-id="{{m.id}}">
 <td class="fixture-time"><span class="fixture-date">{{m.kickoff[8:10]}}.{{m.kickoff[5:7]}}</span><b class="fixture-hour">{{m.kickoff[11:16] if m.kickoff and m.kickoff|length>15 else '—'}}</b></td>
 <td>{{m.league or "—"}}</td>
@@ -129,5 +129,39 @@
 </div></td></tr>{% endfor %}
 </tbody></table></div></section>{% endif %}
 {% if view=='live' %}<script>(()=>{const day={{day|tojson}};async function f(){try{const r=await fetch("/sync/live/refresh",{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":document.querySelector('meta[name="csrf-token"]').content},body:JSON.stringify({date:day}),cache:"no-store"});if(!r.ok)return;const p=await r.json();for(const m of(p.matches||[])){const row=document.querySelector('[data-match-id="'+m.id+'"]');if(!row)continue;const s=row.querySelector("[data-status-cell]"),sc=row.querySelector("[data-score-cell]");if(s)s.textContent=m.minute_label||"CANLI";if(sc)sc.textContent=m.score||"—"}}catch(_){}}f();window.setInterval(f,30000)})();</script>{% endif %}
+<script>
+(()=> {
+ const search=document.getElementById('fixtureTeamSearch');
+ const status=document.getElementById('fixtureSearchStatus');
+ const table=document.querySelector('.src-fixtures');
+ if(!search||!status||!table)return;
+ const rows=Array.from(table.querySelectorAll('tbody tr[data-match-id]'));
+ const normalize=value=>String(value||'').toLocaleLowerCase('tr-TR')
+   .normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/ı/g,'i').replace(/\\s+/g,' ').trim();
+ const empty=document.createElement('p');
+ empty.className='fixture-search-empty';
+ empty.hidden=true;
+ empty.textContent='Bu takım adına göre maç bulunamadı.';
+ table.parentElement.appendChild(empty);
+ const count=document.getElementById('fixtureTotalCount');
+ const total=rows.length;
+ const apply=()=>{
+  const query=normalize(search.value);
+  let visible=0;
+  for(const row of rows){
+   const teams=row.querySelector('.team-pair')?.textContent||'';
+   const match=!query||normalize(teams).includes(query);
+   row.hidden=!match;
+   if(match)visible++;
+  }
+  status.textContent=query?(visible+' / '+total+' maç eşleşti'):(total+' maç listeleniyor');
+  empty.hidden=visible!==0||!query;
+  table.hidden=visible===0&&!!query;
+  if(count)count.textContent=String(query?visible:total);
+ };
+ search.addEventListener('input',apply);
+ search.addEventListener('search',apply);
+})();
+</script>
 <script>(()=>{const cache=new Set();const load=el=>{const name=decodeURIComponent(el.dataset.teamName||"");if(!name||cache.has(name))return;cache.add(name);fetch("/api/team-logo?name="+encodeURIComponent(name),{cache:"force-cache"}).then(r=>r.ok?r.json():null).then(d=>{if(!d||!d.logo)return;document.querySelectorAll(".team-crest[data-team-name]").forEach(node=>{if(decodeURIComponent(node.dataset.teamName||"")!==name)return;const img=document.createElement("img");img.src=d.logo;img.alt=name+" arması";img.loading="lazy";img.onerror=()=>img.remove();node.replaceChildren(img)})}).catch(()=>{})};if("IntersectionObserver" in window){const observer=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){load(entry.target);observer.unobserve(entry.target)}}),{rootMargin:"120px"});document.querySelectorAll(".team-crest[data-team-name]").forEach(el=>observer.observe(el))}else document.querySelectorAll(".team-crest[data-team-name]").forEach(load)})();</script>
 {% endblock %}
