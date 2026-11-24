@@ -458,18 +458,31 @@ class FootballProvider:
 
     @staticmethod
     def find_matching_live_fixture(fixtures, home, away, kickoff=None):
-        """Return one unambiguous live fixture for the exact home/away pair."""
-        target_home = FootballProvider._normalize_search_name(home)
-        target_away = FootballProvider._normalize_search_name(away)
-        candidates = [
-            fixture for fixture in (fixtures or [])
-            if isinstance(fixture, dict) and fixture.get("status") == "live"
-            and FootballProvider._normalize_search_name(fixture.get("home", "")) == target_home
-            and FootballProvider._normalize_search_name(fixture.get("away", "")) == target_away
-            and fixture.get("id")
-        ]
-        if not candidates:
+        """Prefer exact team names; use unique suffix-tolerant matches only as fallback."""
+        def tokens(value):
+            return set(FootballProvider._normalize_search_name(value).split())
+        target_home, target_away = tokens(home), tokens(away)
+        if not target_home or not target_away:
             return None
+        scored = []
+        for fixture in fixtures or []:
+            if not isinstance(fixture, dict) or fixture.get("status") != "live":
+                continue
+            if not (fixture.get("slug") or fixture.get("id")):
+                continue
+            feed_home, feed_away = tokens(fixture.get("home", "")), tokens(fixture.get("away", ""))
+            if not feed_home or not feed_away:
+                continue
+            if not (feed_home == target_home or feed_home.issubset(target_home) or target_home.issubset(feed_home)):
+                continue
+            if not (feed_away == target_away or feed_away.issubset(target_away) or target_away.issubset(feed_away)):
+                continue
+            score = int(feed_home == target_home) + int(feed_away == target_away)
+            scored.append((score, fixture))
+        if not scored:
+            return None
+        best_score = max(score for score, _ in scored)
+        candidates = [fixture for score, fixture in scored if score == best_score]
         if kickoff:
             try:
                 target_time = datetime.fromisoformat(str(kickoff).replace("Z", "+00:00"))
@@ -489,7 +502,8 @@ class FootballProvider:
                         continue
                 if dated:
                     dated.sort(key=lambda pair: pair[0])
-                    if len(dated) == 1 or dated[0][0] < dated[1][0]: return dated[0][1]
+                    if len(dated) == 1 or dated[0][0] < dated[1][0]:
+                        return dated[0][1]
                     return None
             except (TypeError, ValueError, OverflowError):
                 pass
