@@ -584,6 +584,43 @@ class FootballProvider:
         except ValueError as exc: raise ProviderError("SportScore maç detay yanıtı geçerli JSON değil.") from exc
         return payload if isinstance(payload,dict) else {}
 
+    def search_team_logo(self, team_name):
+        """Return a verified exact-name club crest URL from SportScore search, if supplied."""
+        try:
+            response = self.session.get(
+                SEARCH_URL,
+                params={"sport": "football", "q": team_name, "limit": 20},
+                timeout=8,
+            )
+        except requests.RequestException as exc:
+            raise ProviderError(f"SportScore takım arama bağlantı hatası: {exc}") from exc
+        if response.status_code == 429:
+            raise ProviderError("SportScore istek sınırı doldu.")
+        if not response.ok:
+            raise ProviderError(f"SportScore takım arama HTTP {response.status_code}.")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ProviderError("SportScore takım araması geçerli JSON döndürmedi.") from exc
+        target = self._normalize_search_name(team_name)
+        matches = []
+        def walk(value):
+            if isinstance(value, dict):
+                name = self.pick(value, "name", "team_name", "short_name", "display_name")
+                logo = self.pick(value, "logo", "logo_url", "image", "image_url", "crest", "badge", "team_logo")
+                if name and logo and self._normalize_search_name(name) == target:
+                    candidate = str(logo).strip()
+                    if candidate.startswith("https://"):
+                        matches.append(candidate)
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+        walk(payload)
+        unique = list(dict.fromkeys(matches))
+        return unique[0] if len(unique) == 1 else None
+
     def team_fixtures_for_team(self, team_name, limit=30):
         """Fetch up to 30 recent/upcoming fixtures for one named club."""
         slug = self.search_team_slug(team_name)
