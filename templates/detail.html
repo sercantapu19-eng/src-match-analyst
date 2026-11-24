@@ -55,7 +55,7 @@
   }finally{busy=false;}
  }
  refresh();
- timer=window.setInterval(refresh,15000);
+ timer=window.setInterval(refresh,30000);
  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")refresh();});
 })();
 </script>
