@@ -420,7 +420,7 @@ class FootballProvider:
             response = self.session.get(
                 SEARCH_URL,
                 params={"sport": "football", "q": team_name, "limit": 20},
-                timeout=10,
+                timeout=5,
             )
         except requests.RequestException as exc:
             raise ProviderError(f"SportScore takım arama bağlantı hatası: {exc}") from exc
@@ -907,27 +907,27 @@ class FootballProvider:
         return "-".join(FootballProvider._normalize_search_name(value).split())
 
     def match_slug_candidates(self, home, away):
-        """Build candidate match slugs from verified team slugs and normalized names.
+        """Return the direct team-name slug candidate first; it requires detail verification."""
+        home_slug = self._match_team_slug(home)
+        away_slug = self._match_team_slug(away)
+        if not home_slug or not away_slug:
+            return []
+        return [f"{home_slug}-vs-{away_slug}"]
 
-        Candidates are only hints: callers must validate the returned match detail
-        against both team names before using any timeline data.
-        """
+    def team_slug_match_candidates(self, home, away):
+        """Return a secondary candidate assembled from SportScore's verified team slugs."""
         import re
 
-        candidates = []
         home_ref = self.search_team_slug(home)
         away_ref = self.search_team_slug(away)
         slug_pattern = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$", re.I)
         if (home_ref and away_ref and slug_pattern.fullmatch(str(home_ref))
                 and slug_pattern.fullmatch(str(away_ref))
                 and not str(home_ref).isdigit() and not str(away_ref).isdigit()):
-            candidates.append(f"{home_ref}-vs-{away_ref}")
-
-        home_name_slug = self._match_team_slug(home)
-        away_name_slug = self._match_team_slug(away)
-        if home_name_slug and away_name_slug:
-            candidates.append(f"{home_name_slug}-vs-{away_name_slug}")
-        return list(dict.fromkeys(candidates))[:2]
+            candidate = f"{home_ref}-vs-{away_ref}"
+            direct = self.match_slug_candidates(home, away)
+            return [] if candidate in direct else [candidate]
+        return []
 
     @staticmethod
     def match_detail_matches_teams(payload, home, away):
@@ -965,7 +965,7 @@ class FootballProvider:
         """Fetch one match's details and official event timeline."""
         if not slug: return {}
         try:
-            response=self.session.get(MATCH_DETAIL_URL,params={"sport":"football","slug":str(slug)},timeout=10)
+            response=self.session.get(MATCH_DETAIL_URL,params={"sport":"football","slug":str(slug)},timeout=6)
         except requests.RequestException as exc:
             raise ProviderError(f"SportScore maç detay bağlantı hatası: {exc}") from exc
         if response.status_code==429: raise ProviderError("SportScore maç detay istek sınırı doldu.")
