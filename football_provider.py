@@ -7,6 +7,7 @@ SEARCH_URL = "https://sportscore.com/api/v1/search/"
 TEAM_URL = "https://sportscore.com/api/widget/team/"
 LIVE_MATCHES_URL = "https://sportscore.com/api/widget/matches/"
 MATCH_DETAIL_URL = "https://sportscore.com/api/widget/match/"
+_TEAM_NAME_LOOKUP_CACHE = {}
 
 class ProviderError(Exception):
     pass
@@ -124,7 +125,7 @@ class FootballProvider:
         if text.casefold() in {"tea", "tbd", "tba", "unknown", "unknown team", "team unknown",
                                "team not found", "to be announced", "n/a"}:
             return True
-        return bool(re.fullmatch(r"(?i)team[\\s:_-]+[a-z0-9][a-z0-9_-]{7,}", text))
+        return bool(re.fullmatch(r"(?i)team[\s:_-]+[a-z0-9][a-z0-9_-]{7,}", text))
 
     @staticmethod
     def team_name(value, fallback):
@@ -169,7 +170,7 @@ class FootballProvider:
                 if reference:
                     return reference
         elif isinstance(value, str):
-            match = re.fullmatch(r"(?i)\\s*team[\\s:_-]+([a-z0-9][a-z0-9_-]{7,})\\s*", value)
+            match = re.fullmatch(r"(?i)\s*team[\s:_-]+([a-z0-9][a-z0-9_-]{7,})\s*", value)
             if match:
                 return match.group(1)
         return None
