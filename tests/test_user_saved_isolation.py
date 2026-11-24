@@ -289,6 +289,7 @@ class SavedMatchIsolationTests(unittest.TestCase):
 
     def test_saved_match_summary_translates_btts_and_goal_selections(self):
         self._login_as(self.user_one, "one@example.com")
+        self._save(self.match_one)
         with application.db() as conn:
             conn.execute(
                 "UPDATE matches SET over25='Over 2.5',btts='yes' WHERE id=?",
