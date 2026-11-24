@@ -487,8 +487,6 @@ def index():
   today_total=c.execute("""SELECT COUNT(*) FROM (SELECT ROW_NUMBER() OVER (PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id) rank_no FROM matches WHERE substr(kickoff,1,10)=?) ranked WHERE rank_no=1""",(day,)).fetchone()[0]
   settled=c.execute("SELECT COUNT(*) total,SUM(CASE WHEN outcome='won' THEN 1 ELSE 0 END) won FROM results WHERE outcome IN ('won','lost')").fetchone()
   success_rate=round((settled['won'] or 0)*100/settled['total']) if settled['total'] else 0
-  recent=c.execute("SELECT outcome FROM results WHERE outcome IN ('won','lost') ORDER BY id DESC LIMIT 10").fetchall()
-  recent_count=len(recent); recent_wins=sum(1 for item in recent if item['outcome']=='won')
   live_featured=c.execute("""SELECT id,home,away,league,kickoff,home_goals,away_goals,
    ht_home,ht_away,elapsed_minute,status_short FROM matches
    WHERE status='live' ORDER BY kickoff DESC,id DESC LIMIT 1""").fetchone()
@@ -524,7 +522,7 @@ def index():
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
   unverified_count=unverified,live_count=live_count,today_total=today_total,
-  success_rate=success_rate,recent_count=recent_count,recent_wins=recent_wins,
+  success_rate=success_rate,
   daily_picks=daily_picks,daily_pick_count=len(daily_picks),daily_match_count=daily_match_count,
   live_featured=live_featured)
 
