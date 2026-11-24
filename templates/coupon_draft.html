@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block content %}
 <nav class="detail-actions"><a class="button secondary" href="/coupon">← Kupon Analiz Merkezi</a><a class="button secondary" href="/saved">Kayıtlı Kuponlar</a></nav>
-<section class="hero"><div><div class="eyebrow">SRC MATCH ANALYST · KUPON OLUŞTUR</div><h1>Kupon Taslağım</h1><p>Farklı maçlardan istediğin bahis seçimlerini tek kuponda biriktir.</p></div><div class="stats"><div><b>{{items|length}}</b><small>Bahis seçimi</small></div></div></section>
+<section class="hero coupon-draft-hero"><div><div class="eyebrow">SRC MATCH ANALYST · KUPON OLUŞTUR</div><h1>Kupon Taslağım</h1><p>Farklı maçlardan istediğin bahis seçimlerini tek kuponda biriktir.</p></div><div class="stats"><div><b>{{items|length}}</b><small>Bahis seçimi</small></div></div></section>
 {% if items %}
 <section class="panel coupon-draft-list">
  {% for p in items %}
@@ -19,5 +19,12 @@
 <style>
 .coupon-draft-list{display:grid;gap:0}.coupon-draft-item{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(130px,1fr) auto auto;gap:14px;align-items:center;padding:13px 0;border-bottom:1px solid var(--line)}.coupon-draft-item:last-child{border:0}.coupon-draft-item small,.coupon-draft-item span{display:block;color:var(--muted);font-size:.82rem;margin-top:4px}.coupon-draft-item form{margin:0}@media(max-width:650px){.coupon-draft-item{grid-template-columns:1fr auto}.coupon-draft-item>div:nth-child(2){grid-column:1}.coupon-draft-item>a{grid-column:1}.coupon-draft-item form{grid-column:2;grid-row:1/4}}
 .coupon-saved-row{display:grid;grid-template-columns:1.5fr 1fr auto auto;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}.coupon-saved-row small{display:block;color:var(--muted);margin-top:4px}.coupon-saved-row span{font-size:.88rem}@media(max-width:650px){.coupon-saved-row{grid-template-columns:1fr 1fr}.coupon-saved-row>span:last-of-type{justify-self:start}}
+.coupon-draft-hero{background:var(--surface)!important;color:var(--text)!important;border-color:var(--line)!important}
+.coupon-draft-hero h1,.coupon-draft-hero p,.coupon-draft-hero .stats small{color:var(--text)!important}
+.coupon-draft-hero p{opacity:1!important}
+.coupon-draft-hero .stats div{background:var(--surface2)!important;border-color:var(--line)!important}
+.coupon-draft-hero .stats b{color:var(--accent)!important}
+:root[data-theme=light] .coupon-draft-hero{background:var(--surface)!important;color:var(--text)!important}
+:root[data-theme=light] .coupon-draft-hero h1,:root[data-theme=light] .coupon-draft-hero p,:root[data-theme=light] .coupon-draft-hero .stats small{color:var(--text)!important}
 </style>
 {% endblock %}
