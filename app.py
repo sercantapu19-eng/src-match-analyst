@@ -527,6 +527,10 @@ def index():
   live_featured=c.execute("""SELECT id,home,away,league,kickoff,home_goals,away_goals,
    ht_home,ht_away,elapsed_minute,status_short FROM matches
    WHERE status='live' ORDER BY kickoff DESC,id DESC LIMIT 1""").fetchone()
+  live_matches_summary=c.execute("""SELECT id,home,away,league,kickoff,elapsed_minute,
+   home_goals,away_goals FROM matches
+   WHERE status='live' AND substr(kickoff,1,10)=?
+   ORDER BY kickoff DESC,id DESC LIMIT 30""",(day,)).fetchall()
   upcoming=c.execute("""SELECT COUNT(*) FROM (
    SELECT ROW_NUMBER() OVER (
     PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
@@ -562,7 +566,7 @@ def index():
   unverified_count=unverified,live_count=live_count,today_total=today_total,
   success_rate=success_rate,
   daily_picks=daily_picks,daily_pick_count=len(daily_picks),daily_match_count=daily_match_count,
-  live_featured=live_featured)
+  live_featured=live_featured,live_matches_summary=live_matches_summary)
 
 @app.post("/sync/fixtures")
 @admin_required
