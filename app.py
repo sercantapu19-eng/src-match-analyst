@@ -4,6 +4,7 @@ from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from football_provider import FootballProvider, ProviderError
+from odds_provider import ApiFootballOddsProvider, OddsProviderError
 from prediction_engine import predict, prepare_history
 from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required, is_admin_user
 from result_sync import actual_market_values, evaluate_prediction, prefer_saved_match, matching_fixture_rows
@@ -261,6 +262,15 @@ def init_db():
     raw_meta TEXT DEFAULT '{}',first_seen_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
     UNIQUE(match_id,event_uid))""")
    c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+   c.execute("""CREATE TABLE IF NOT EXISTS match_odds_fixture_map(
+    match_id BIGINT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,provider_fixture_id BIGINT NOT NULL,
+    home_name TEXT DEFAULT '',away_name TEXT DEFAULT '',matched_at TEXT NOT NULL,provider TEXT DEFAULT 'api-football')""")
+   c.execute("""CREATE TABLE IF NOT EXISTS match_odds_snapshots(
+    id BIGSERIAL PRIMARY KEY,match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,bookmaker_id TEXT DEFAULT '',bookmaker_name TEXT DEFAULT '',
+    market_id TEXT DEFAULT '',market_name TEXT DEFAULT '',selection TEXT DEFAULT '',handicap TEXT DEFAULT '',
+    odd TEXT NOT NULL,suspended BOOLEAN DEFAULT FALSE,captured_at TEXT NOT NULL,raw_meta TEXT DEFAULT '{}')""")
+   c.execute("CREATE INDEX IF NOT EXISTS idx_match_odds_timeline ON match_odds_snapshots(match_id,source,captured_at)")
    c.execute("CREATE INDEX IF NOT EXISTS idx_match_live_state_status ON match_live_state(status)")
   migration=migrate_legacy_sqlite_to_postgres()
   if migration["status"] == "legacy_file_not_found":
@@ -304,6 +314,17 @@ def init_db():
    last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
    FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,UNIQUE(match_id,event_uid))""")
   c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+  c.execute("""CREATE TABLE IF NOT EXISTS match_odds_fixture_map(
+   match_id INTEGER PRIMARY KEY,provider_fixture_id INTEGER NOT NULL,home_name TEXT DEFAULT '',
+   away_name TEXT DEFAULT '',matched_at TEXT NOT NULL,provider TEXT DEFAULT 'api-football',
+   FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
+  c.execute("""CREATE TABLE IF NOT EXISTS match_odds_snapshots(
+   id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL,source TEXT NOT NULL,
+   bookmaker_id TEXT DEFAULT '',bookmaker_name TEXT DEFAULT '',market_id TEXT DEFAULT '',
+   market_name TEXT DEFAULT '',selection TEXT DEFAULT '',handicap TEXT DEFAULT '',
+   odd TEXT NOT NULL,suspended INTEGER DEFAULT 0,captured_at TEXT NOT NULL,raw_meta TEXT DEFAULT '{}',
+   FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
+  c.execute("CREATE INDEX IF NOT EXISTS idx_match_odds_timeline ON match_odds_snapshots(match_id,source,captured_at)")
   c.execute("CREATE INDEX IF NOT EXISTS idx_match_live_state_status ON match_live_state(status)")
 
 
