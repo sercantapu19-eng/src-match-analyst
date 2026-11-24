@@ -15,6 +15,16 @@ if (os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production") and l
 app.secret_key=secret_key or secrets.token_urlsafe(48)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production"))
 
+def _is_placeholder_team_name(value):
+ import re
+ text=str(value or "").strip()
+ if not text:
+  return False
+ if text.casefold() in {"tea","tbd","tba","unknown","unknown team","team unknown","team not found","to be announced","n/a"}:
+  return True
+ return bool(re.fullmatch(r"(?i)team[\s:_-]+[a-z0-9][a-z0-9_-]{7,}",text))
+
+
 def csrf_token():
  token=session.get("_csrf_token")
  if not token:
@@ -25,6 +35,12 @@ def csrf_token():
 @app.context_processor
 def inject_template_security():
  return {"csrf_token":csrf_token,"is_admin":is_admin_user()}
+
+@app.template_filter("team_display")
+def team_display(value):
+ if _is_placeholder_team_name(value):
+  return "Takım adı doğrulanamadı"
+ return str(value or "Takım adı belirtilmedi")
 
 @app.before_request
 def enforce_csrf():
@@ -239,41 +255,60 @@ def provider_ready():
  return True  # SportScore supports public access; API key is optional
 
 def upsert_fixture_record(c, fixture, provider="sportscore"):
- # Some feed variants omit a stable fixture ID. Fall back to a deterministic
- # identity so repeated syncs update the existing row instead of inserting it.
+ # Never let provider-generated "Team <opaque-id>" labels overwrite a real club name.
  external_id=str(fixture.get("id") or "").strip()
  provider_name=str(fixture.get("provider") or provider)
- if not external_id:
-  existing=c.execute("""SELECT id FROM matches
-   WHERE provider=? AND COALESCE(external_id,'')=''
-    AND lower(trim(home))=lower(trim(?))
-    AND lower(trim(away))=lower(trim(?))
-    AND lower(trim(COALESCE(league,'')))=lower(trim(?))
-    AND kickoff=?
-   ORDER BY id LIMIT 1""",
-   (provider_name,fixture["home"],fixture["away"],fixture.get("league",""),fixture.get("kickoff",""))).fetchone()
+ home_placeholder=_is_placeholder_team_name(fixture.get("home"))
+ away_placeholder=_is_placeholder_team_name(fixture.get("away"))
+
+ def update_existing(existing):
+  home=existing["home"] if home_placeholder else fixture["home"]
+  away=existing["away"] if away_placeholder else fixture["away"]
+  c.execute("""UPDATE matches SET home=?,away=?,league=?,status=?,home_goals=?,away_goals=?,ht_home=?,ht_away=?,
+   status_short=?,elapsed_minute=? WHERE id=?""",
+   (home,away,fixture.get("league",""),fixture["status"],fixture.get("home_goals"),fixture.get("away_goals"),
+    fixture.get("ht_home"),fixture.get("ht_away"),fixture.get("status_short",""),
+    fixture.get("elapsed_minute"),existing["id"]))
+  return existing["id"]
+
+ if external_id:
+  existing=c.execute("SELECT id,home,away FROM matches WHERE provider=? AND external_id=? ORDER BY id LIMIT 1",
+   (provider_name,external_id)).fetchone()
   if existing:
-   c.execute("""UPDATE matches SET league=?,status=?,home_goals=?,away_goals=?,ht_home=?,ht_away=?,
-    status_short=?,elapsed_minute=? WHERE id=?""",
-    (fixture.get("league",""),fixture["status"],fixture.get("home_goals"),fixture.get("away_goals"),
-     fixture.get("ht_home"),fixture.get("ht_away"),fixture.get("status_short",""),
-     fixture.get("elapsed_minute"),existing["id"]))
-   return existing["id"]
+   return update_existing(existing)
+ else:
+  candidates=c.execute("""SELECT id,home,away FROM matches
+   WHERE provider=? AND COALESCE(external_id,'')='' AND kickoff=?
+    AND lower(trim(COALESCE(league,'')))=lower(trim(?))
+   ORDER BY id""",(provider_name,fixture.get("kickoff",""),fixture.get("league",""))).fetchall()
+  exact=[row for row in candidates
+   if str(row["home"] or "").strip().casefold()==str(fixture["home"] or "").strip().casefold()
+   and str(row["away"] or "").strip().casefold()==str(fixture["away"] or "").strip().casefold()]
+  if exact:
+   return update_existing(exact[0])
+  if home_placeholder or away_placeholder:
+   compatible=[row for row in candidates
+    if (home_placeholder or str(row["home"] or "").strip().casefold()==str(fixture["home"] or "").strip().casefold())
+    and (away_placeholder or str(row["away"] or "").strip().casefold()==str(fixture["away"] or "").strip().casefold())]
+   if len(compatible)==1:
+    return update_existing(compatible[0])
+
  cur=c.execute("""INSERT INTO matches(home,away,league,kickoff,status,created_at,provider,external_id,
   home_goals,away_goals,ht_home,ht_away,status_short,elapsed_minute)
   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   ON CONFLICT(provider,external_id) WHERE external_id <> '' DO UPDATE SET
-  home=excluded.home,away=excluded.away,league=excluded.league,kickoff=excluded.kickoff,
+  home=CASE WHEN ? THEN matches.home ELSE excluded.home END,
+  away=CASE WHEN ? THEN matches.away ELSE excluded.away END,
+  league=excluded.league,kickoff=excluded.kickoff,
   status=excluded.status,home_goals=excluded.home_goals,away_goals=excluded.away_goals,
   ht_home=excluded.ht_home,ht_away=excluded.ht_away,status_short=excluded.status_short,
   elapsed_minute=excluded.elapsed_minute RETURNING id""",
   (fixture["home"],fixture["away"],fixture.get("league",""),fixture.get("kickoff",""),
    fixture["status"],datetime.utcnow().isoformat(),provider_name,external_id,
-   fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),
-   fixture.get("ht_away"),fixture.get("status_short",""),fixture.get("elapsed_minute")))
+   fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),fixture.get("ht_away"),
+   fixture.get("status_short",""),fixture.get("elapsed_minute"),home_placeholder,away_placeholder))
  row=cur.fetchone()
  return row["id"] if row else None
-
 
 def store_fixtures(c, fixtures):
  stored=0
@@ -331,6 +366,8 @@ def team_logo():
  team_name=(request.args.get("name") or "").strip()[:100]
  if not team_name:
   return jsonify({"logo":None}),400
+ if _is_placeholder_team_name(team_name):
+  return jsonify({"logo":None})
  cache_key=team_name.casefold()
  cached=_TEAM_LOGO_CACHE.get(cache_key)
  if cached and cached[0] > time.time():

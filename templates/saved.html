@@ -7,7 +7,7 @@
  <p class="muted">Yalnızca seçtiğin pazar tahminleri burada listelenir.</p>
  {% for p in selected_predictions %}
  <div class="saved-prediction-row">
-  <strong>{{p.home}} – {{p.away}}</strong>
+  <strong>{{p.home|team_display}} – {{p.away|team_display}}</strong>
   <p>{{p.league}} · {{p.kickoff[:10] if p.kickoff else "—"}} {{p.kickoff[11:16] if p.kickoff and p.kickoff|length >= 16 else ""}}</p>
   <p>{{p.market_key}} · {{p.selection_key}}</p>
   {% if p.outcome=="won" %}<span class="result-won">✓ Kazandı</span>
@@ -21,7 +21,7 @@
 {% endif %}
 {% for m in matches %}
 <section class="panel saved-match">
- <h2>{{m.home}} – {{m.away}}</h2>
+ <h2>{{m.home|team_display}} – {{m.away|team_display}}</h2>
  <p>{{m.kickoff}} · {{m.league}}</p>
  <p><strong>Durum:</strong> {{ "Tamamlandı" if m.status=="finished" else "Canlı" if m.status=="live" else "Başlamadı" }}</p>
  {% if m.status=="finished" and m.home_goals is not none and m.away_goals is not none %}

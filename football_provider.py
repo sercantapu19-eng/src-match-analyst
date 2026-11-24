@@ -7,6 +7,7 @@ SEARCH_URL = "https://sportscore.com/api/v1/search/"
 TEAM_URL = "https://sportscore.com/api/widget/team/"
 LIVE_MATCHES_URL = "https://sportscore.com/api/widget/matches/"
 MATCH_DETAIL_URL = "https://sportscore.com/api/widget/match/"
+_TEAM_NAME_LOOKUP_CACHE = {}
 
 class ProviderError(Exception):
     pass
@@ -114,10 +115,118 @@ class FootballProvider:
         return None
 
     @staticmethod
+    def is_placeholder_team_name(value):
+        """Identify provider-generated team labels that contain only an opaque ID."""
+        import re
+
+        text = str(value or "").strip()
+        if not text:
+            return False
+        if text.casefold() in {"tea", "tbd", "tba", "unknown", "unknown team", "team unknown",
+                               "team not found", "to be announced", "n/a"}:
+            return True
+        return bool(re.fullmatch(r"(?i)team[\s:_-]+[a-z0-9][a-z0-9_-]{7,}", text))
+
+    @staticmethod
     def team_name(value, fallback):
+        """Read common team display-name fields, preferring a usable name over a placeholder."""
         if isinstance(value, dict):
-            return value.get("name") or value.get("short_name") or fallback
-        return value or fallback
+            keys = (
+                "display_name", "displayName", "full_name", "fullName",
+                "official_name", "officialName", "localized_name", "localizedName",
+                "name", "team_name", "teamName", "short_name", "shortName",
+            )
+            candidates = [value.get(key) for key in keys
+                          if value.get(key) not in (None, "")]
+            for candidate in candidates:
+                if not FootballProvider.is_placeholder_team_name(candidate):
+                    return str(candidate).strip()
+            if candidates:
+                return str(candidates[0]).strip()
+            nested = value.get("team")
+            if isinstance(nested, dict):
+                return FootballProvider.team_name(nested, fallback)
+            return fallback
+        return str(value).strip() if value not in (None, "") else fallback
+
+    @staticmethod
+    def team_reference(value):
+        """Extract a stable provider team slug/ID from a team object or placeholder label."""
+        import re
+
+        if isinstance(value, dict):
+            nested = value.get("team")
+            if isinstance(nested, dict):
+                reference = FootballProvider.team_reference(nested)
+                if reference:
+                    return reference
+            for key in ("slug", "team_slug", "teamSlug", "team_id", "teamId",
+                        "id", "external_id", "externalId", "uuid", "identifier"):
+                candidate = value.get(key)
+                if candidate not in (None, ""):
+                    return str(candidate).strip()
+            for key in ("name", "display_name", "displayName", "team_name", "teamName"):
+                reference = FootballProvider.team_reference(value.get(key))
+                if reference:
+                    return reference
+        elif isinstance(value, str):
+            match = re.fullmatch(r"(?i)\s*team[\s:_-]+([a-z0-9][a-z0-9_-]{7,})\s*", value)
+            if match:
+                return match.group(1)
+        return None
+
+    def resolve_team_name(self, reference):
+        """Resolve a provider ID only when search returns a unique exact ID/slug match."""
+        import time
+
+        reference = str(reference or "").strip()
+        if not reference:
+            return None
+        cached = _TEAM_NAME_LOOKUP_CACHE.get(reference)
+        now = time.time()
+        if cached and cached[0] > now:
+            return cached[1]
+
+        candidates = set()
+        try:
+            response = self.session.get(
+                SEARCH_URL,
+                params={"sport": "football", "q": reference, "limit": 20},
+                timeout=3,
+            )
+            if response.ok:
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = None
+
+                def walk(value):
+                    if isinstance(value, dict):
+                        identifiers = {
+                            str(value.get(key)).strip()
+                            for key in ("id", "team_id", "teamId", "slug", "team_slug",
+                                        "teamSlug", "external_id", "externalId", "uuid")
+                            if value.get(key) not in (None, "")
+                        }
+                        name = FootballProvider.team_name(value, "")
+                        if reference in identifiers and name and not FootballProvider.is_placeholder_team_name(name):
+                            candidates.add(name)
+                        for child in value.values():
+                            if isinstance(child, (dict, list)):
+                                walk(child)
+                    elif isinstance(value, list):
+                        for child in value:
+                            if isinstance(child, (dict, list)):
+                                walk(child)
+
+                walk(payload)
+        except Exception:
+            # When lookup is unavailable, the caller keeps a safe placeholder label.
+            pass
+
+        resolved = next(iter(candidates)) if len(candidates) == 1 else None
+        _TEAM_NAME_LOOKUP_CACHE[reference] = (now + (86400 if resolved else 300), resolved)
+        return resolved
 
     @staticmethod
     def local_kickoff(value):
@@ -164,15 +273,38 @@ class FootballProvider:
             raise ProviderError("SportScore yanıtında maç listesi bulunamadı.")
 
         output = []
+        lookup_attempts = set()
+
+        def fixture_team_name(value, fallback):
+            while isinstance(value, dict) and isinstance(value.get("team"), dict):
+                value = value["team"]
+            name = self.team_name(value, fallback)
+            if self.is_placeholder_team_name(name):
+                reference = self.team_reference(value) or self.team_reference(name)
+                if reference and reference not in lookup_attempts and len(lookup_attempts) < 2:
+                    lookup_attempts.add(reference)
+                    resolved = self.resolve_team_name(reference)
+                    if resolved:
+                        return resolved
+            return name
+
         for item in rows:
             if not isinstance(item, dict):
                 continue
-            home = self.pick(item, "home", "home_team", "team_home", default={})
-            away = self.pick(item, "away", "away_team", "team_away", default={})
-            if isinstance(home, dict) and isinstance(home.get("team"), dict): home = home["team"]
-            if isinstance(away, dict) and isinstance(away.get("team"), dict): away = away["team"]
-            home_name = self.team_name(home, "Ev sahibi")
-            away_name = self.team_name(away, "Deplasman")
+            home = self.pick(item, "home", "home_team", "team_home", "homeTeam", default={})
+            away = self.pick(item, "away", "away_team", "team_away", "awayTeam", default={})
+            if isinstance(home, dict) and isinstance(home.get("team"), dict):
+                home = home["team"]
+            if isinstance(away, dict) and isinstance(away.get("team"), dict):
+                away = away["team"]
+            if not isinstance(home, dict):
+                home_ref = self.pick(item, "home_team_id", "homeTeamId", "home_id", "home_team_slug", "homeTeamSlug")
+                home = {"name": home, "id": home_ref} if home_ref else home
+            if not isinstance(away, dict):
+                away_ref = self.pick(item, "away_team_id", "awayTeamId", "away_id", "away_team_slug", "awayTeamSlug")
+                away = {"name": away, "id": away_ref} if away_ref else away
+            home_name = fixture_team_name(home, "Ev sahibi")
+            away_name = fixture_team_name(away, "Deplasman")
             if home_name == "Ev sahibi" or away_name == "Deplasman": continue
 
             league_obj = self.pick(item, "competition", "league", "tournament", default={})
@@ -232,6 +364,9 @@ class FootballProvider:
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
                 "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
+                "home_team_ref": self.team_reference(home), "away_team_ref": self.team_reference(away),
+                "home_name_placeholder": self.is_placeholder_team_name(home_name),
+                "away_name_placeholder": self.is_placeholder_team_name(away_name),
                 "kickoff": self.local_kickoff(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),
                 "elapsed_minute": elapsed_value,
@@ -306,9 +441,9 @@ class FootballProvider:
 
         def walk(value):
             if isinstance(value, dict):
-                name = self.pick(value, "name", "team_name", "short_name", "display_name")
-                slug = self.pick(value, "slug", "team_slug")
-                if name and slug:
+                name = self.team_name(value, "")
+                slug = self.pick(value, "slug", "team_slug", "teamSlug", "id", "team_id")
+                if name and slug and not self.is_placeholder_team_name(name):
                     key = (str(name), str(slug))
                     if key not in seen:
                         seen.add(key)
@@ -339,21 +474,45 @@ class FootballProvider:
                 return next(iter(best_slugs))
         return None
 
-    def parse_fixtures_payload(self, payload):
-        """Parse serialized matches from either /fixtures or /team."""
+    def parse_fixtures_payload(self, payload, resolve_placeholders=True, max_team_lookups=2):
+        """Parse fixtures and resolve only uniquely identifiable provider placeholder teams."""
         rows = self._extract_rows(payload)
         output = []
+        lookup_attempts = set()
+
+        def unwrap_team(value):
+            while isinstance(value, dict) and isinstance(value.get("team"), dict):
+                value = value["team"]
+            return value
+
+        def side_name(value, fallback):
+            value = unwrap_team(value)
+            name = self.team_name(value, fallback)
+            if not self.is_placeholder_team_name(name) or not resolve_placeholders:
+                return name
+            reference = self.team_reference(value) or self.team_reference(name)
+            if reference and reference not in lookup_attempts and len(lookup_attempts) < max_team_lookups:
+                lookup_attempts.add(reference)
+                resolved = self.resolve_team_name(reference)
+                if resolved:
+                    return resolved
+            return name
+
         for item in rows:
             if not isinstance(item, dict):
                 continue
-            home = self.pick(item, "home", "home_team", "team_home", default={})
-            away = self.pick(item, "away", "away_team", "team_away", default={})
-            if isinstance(home, dict) and isinstance(home.get("team"), dict):
-                home = home["team"]
-            if isinstance(away, dict) and isinstance(away.get("team"), dict):
-                away = away["team"]
-            home_name = self.team_name(home, "Ev sahibi")
-            away_name = self.team_name(away, "Deplasman")
+            home = self.pick(item, "home", "home_team", "team_home", "homeTeam", default={})
+            away = self.pick(item, "away", "away_team", "team_away", "awayTeam", default={})
+            home = unwrap_team(home)
+            away = unwrap_team(away)
+            if not isinstance(home, dict):
+                home_ref = self.pick(item, "home_team_id", "homeTeamId", "home_id", "home_team_slug", "homeTeamSlug")
+                home = {"name": home, "id": home_ref} if home_ref else home
+            if not isinstance(away, dict):
+                away_ref = self.pick(item, "away_team_id", "awayTeamId", "away_id", "away_team_slug", "awayTeamSlug")
+                away = {"name": away, "id": away_ref} if away_ref else away
+            home_name = side_name(home, "Ev sahibi")
+            away_name = side_name(away, "Deplasman")
             if home_name == "Ev sahibi" or away_name == "Deplasman":
                 continue
             league_obj = self.pick(item, "competition", "league", "tournament", default={})
@@ -398,6 +557,10 @@ class FootballProvider:
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
                 "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
+                "home_team_ref": self.team_reference(home),
+                "away_team_ref": self.team_reference(away),
+                "home_name_placeholder": self.is_placeholder_team_name(home_name),
+                "away_name_placeholder": self.is_placeholder_team_name(away_name),
                 "kickoff": self.local_kickoff(kickoff), "status": state,
                 "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),
@@ -586,6 +749,8 @@ class FootballProvider:
 
     def search_team_logo(self, team_name):
         """Return a verified exact-name club crest URL from SportScore search, if supplied."""
+        if self.is_placeholder_team_name(team_name):
+            return None
         try:
             response = self.session.get(
                 SEARCH_URL,
