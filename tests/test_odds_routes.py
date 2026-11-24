@@ -67,9 +67,10 @@ class OddsRouteTests(unittest.TestCase):
                     "captured_at": "2026-11-24T18:00:00+00:00", "raw": {},
                 }]
 
-            def live_odds(self, fixture_id):
+            def live_odds(self):
                 type(self).live_calls += 1
                 return [{
+                    "fixture_id": "98765",
                     "source": "live", "bookmaker_id": "8", "bookmaker": "Example Book",
                     "market_id": "1", "market": "Match Winner", "selection": "Home",
                     "handicap": "", "odd": "2.25", "suspended": False,
