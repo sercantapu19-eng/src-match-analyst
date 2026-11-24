@@ -1659,9 +1659,10 @@ def _claim_odds_poll(poll_key, cache_seconds):
  with db() as conn:
   conn.execute("INSERT OR IGNORE INTO provider_poll_state(poll_key) VALUES(?)",(poll_key,))
   state=conn.execute("SELECT fetched_at,lease_until,last_error FROM provider_poll_state WHERE poll_key=?",(poll_key,)).fetchone()
-  if state and state["last_error"] and _is_cache_fresh(state["fetched_at"],60,now_dt):
-   return False
-  if state and _is_cache_fresh(state["fetched_at"],cache_seconds,now_dt):
+  if state and state["last_error"]:
+   if _is_cache_fresh(state["fetched_at"],60,now_dt):
+    return False
+  elif state and _is_cache_fresh(state["fetched_at"],cache_seconds,now_dt):
    return False
   updated=conn.execute("""UPDATE provider_poll_state SET lease_until=?
    WHERE poll_key=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,poll_key,now))
@@ -1691,7 +1692,8 @@ def _latest_odds_rows(match_id, source, earliest=False):
 def _refresh_global_live_odds(provider):
  """Fetch one shared in-play feed and fan it out to every mapped live fixture."""
  poll_key="api_football_odds_live_global"
- if not _claim_odds_poll(poll_key,30):
+ poll_seconds=max(5,min(60,int(os.environ.get("ODDS_LIVE_POLL_SECONDS","15") or "15")))
+ if not _claim_odds_poll(poll_key,poll_seconds):
   return ""
  try:
   rows=provider.live_odds()
