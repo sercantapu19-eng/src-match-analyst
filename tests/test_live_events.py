@@ -73,6 +73,27 @@ class LiveEventParserTests(unittest.TestCase):
         self.assertTrue(first[0]["event_uid"].startswith("fallback:"))
 
 
+class LiveMinuteEstimateTests(unittest.TestCase):
+    def test_estimates_first_half_clock_from_kickoff_and_marks_it_approximate(self):
+        kickoff=datetime(2026, 11, 24, 20, 45, tzinfo=ZoneInfo("Europe/Istanbul"))
+        now=datetime(2026, 11, 24, 21, 8, tzinfo=ZoneInfo("Europe/Istanbul"))
+        minute=application._estimated_live_minute(kickoff.isoformat(),"live",now)
+        self.assertEqual(minute,23)
+        self.assertEqual(application._live_minute_label("live",minute,True),"≈23′ · Canlı")
+
+    def test_estimate_accounts_for_a_normal_halftime_interval(self):
+        kickoff=datetime(2026, 11, 24, 20, 0, tzinfo=ZoneInfo("Europe/Istanbul"))
+        now=datetime(2026, 11, 24, 21, 8, tzinfo=ZoneInfo("Europe/Istanbul"))
+        self.assertEqual(application._estimated_live_minute(kickoff.isoformat(),"live",now),53)
+
+    def test_does_not_estimate_before_kickoff_or_for_finished_matches(self):
+        kickoff=datetime(2026, 11, 24, 20, 45, tzinfo=ZoneInfo("Europe/Istanbul"))
+        before=datetime(2026, 11, 24, 20, 30, tzinfo=ZoneInfo("Europe/Istanbul"))
+        self.assertIsNone(application._estimated_live_minute(kickoff.isoformat(),"live",before))
+        self.assertIsNone(application._estimated_live_minute(kickoff.isoformat(),"finished",
+            datetime(2026, 11, 24, 21, 8, tzinfo=ZoneInfo("Europe/Istanbul"))))
+
+
 class LiveEventCacheRouteTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
