@@ -716,7 +716,11 @@ class FootballProvider:
             value = (raw_type + " " + detail).casefold().replace("_", " ").replace("-", " ")
             compact = re.sub(r"[^a-z0-9ğüşöçıİ]+", " ", value).strip()
 
-            if "corner" in compact or "korner" in compact:
+            cancellation_words = ("cancel", "canceled", "cancelled", "disallowed", "iptal", "overturned")
+            if (("var" in compact or "goal" in compact or "gol" in compact)
+                    and any(word in compact for word in cancellation_words)):
+                kind, label, icon = "goal_cancelled", "Gol VAR ile iptal edildi", "📺"
+            elif "corner" in compact or "korner" in compact:
                 kind, label, icon = "corner", "Korner", "🚩"
             elif "offside" in compact or "ofsayt" in compact:
                 kind, label, icon = "offside", "Ofsayt", "🚫"
