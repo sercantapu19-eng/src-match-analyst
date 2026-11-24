@@ -114,10 +114,118 @@ class FootballProvider:
         return None
 
     @staticmethod
+    def is_placeholder_team_name(value):
+        """Identify provider-generated team labels that contain only an opaque ID."""
+        import re
+
+        text = str(value or "").strip()
+        if not text:
+            return False
+        if text.casefold() in {"tea", "tbd", "tba", "unknown", "unknown team", "team unknown",
+                               "team not found", "to be announced", "n/a"}:
+            return True
+        return bool(re.fullmatch(r"(?i)team[\\s:_-]+[a-z0-9][a-z0-9_-]{7,}", text))
+
+    @staticmethod
     def team_name(value, fallback):
+        """Read common team display-name fields, preferring a usable name over a placeholder."""
         if isinstance(value, dict):
-            return value.get("name") or value.get("short_name") or fallback
-        return value or fallback
+            keys = (
+                "display_name", "displayName", "full_name", "fullName",
+                "official_name", "officialName", "localized_name", "localizedName",
+                "name", "team_name", "teamName", "short_name", "shortName",
+            )
+            candidates = [value.get(key) for key in keys
+                          if value.get(key) not in (None, "")]
+            for candidate in candidates:
+                if not FootballProvider.is_placeholder_team_name(candidate):
+                    return str(candidate).strip()
+            if candidates:
+                return str(candidates[0]).strip()
+            nested = value.get("team")
+            if isinstance(nested, dict):
+                return FootballProvider.team_name(nested, fallback)
+            return fallback
+        return str(value).strip() if value not in (None, "") else fallback
+
+    @staticmethod
+    def team_reference(value):
+        """Extract a stable provider team slug/ID from a team object or placeholder label."""
+        import re
+
+        if isinstance(value, dict):
+            nested = value.get("team")
+            if isinstance(nested, dict):
+                reference = FootballProvider.team_reference(nested)
+                if reference:
+                    return reference
+            for key in ("slug", "team_slug", "teamSlug", "team_id", "teamId",
+                        "id", "external_id", "externalId", "uuid", "identifier"):
+                candidate = value.get(key)
+                if candidate not in (None, ""):
+                    return str(candidate).strip()
+            for key in ("name", "display_name", "displayName", "team_name", "teamName"):
+                reference = FootballProvider.team_reference(value.get(key))
+                if reference:
+                    return reference
+        elif isinstance(value, str):
+            match = re.fullmatch(r"(?i)\\s*team[\\s:_-]+([a-z0-9][a-z0-9_-]{7,})\\s*", value)
+            if match:
+                return match.group(1)
+        return None
+
+    def resolve_team_name(self, reference):
+        """Resolve a provider ID only when search returns a unique exact ID/slug match."""
+        import time
+
+        reference = str(reference or "").strip()
+        if not reference:
+            return None
+        cached = _TEAM_NAME_LOOKUP_CACHE.get(reference)
+        now = time.time()
+        if cached and cached[0] > now:
+            return cached[1]
+
+        candidates = set()
+        try:
+            response = self.session.get(
+                SEARCH_URL,
+                params={"sport": "football", "q": reference, "limit": 20},
+                timeout=3,
+            )
+            if response.ok:
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = None
+
+                def walk(value):
+                    if isinstance(value, dict):
+                        identifiers = {
+                            str(value.get(key)).strip()
+                            for key in ("id", "team_id", "teamId", "slug", "team_slug",
+                                        "teamSlug", "external_id", "externalId", "uuid")
+                            if value.get(key) not in (None, "")
+                        }
+                        name = FootballProvider.team_name(value, "")
+                        if reference in identifiers and name and not FootballProvider.is_placeholder_team_name(name):
+                            candidates.add(name)
+                        for child in value.values():
+                            if isinstance(child, (dict, list)):
+                                walk(child)
+                    elif isinstance(value, list):
+                        for child in value:
+                            if isinstance(child, (dict, list)):
+                                walk(child)
+
+                walk(payload)
+        except Exception:
+            # When lookup is unavailable, the caller keeps a safe placeholder label.
+            pass
+
+        resolved = next(iter(candidates)) if len(candidates) == 1 else None
+        _TEAM_NAME_LOOKUP_CACHE[reference] = (now + (86400 if resolved else 300), resolved)
+        return resolved
 
     @staticmethod
     def local_kickoff(value):
