@@ -262,6 +262,8 @@ def init_db():
     raw_meta TEXT DEFAULT '{}',first_seen_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
     UNIQUE(match_id,event_uid))""")
    c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+   c.execute("""CREATE TABLE IF NOT EXISTS api_football_daily_usage(
+    usage_day TEXT PRIMARY KEY,request_count INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL)""")
    c.execute("""CREATE TABLE IF NOT EXISTS match_odds_fixture_map(
     match_id BIGINT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,provider_fixture_id BIGINT NOT NULL,
     home_name TEXT DEFAULT '',away_name TEXT DEFAULT '',matched_at TEXT NOT NULL,provider TEXT DEFAULT 'api-football')""")
@@ -314,6 +316,8 @@ def init_db():
    last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
    FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,UNIQUE(match_id,event_uid))""")
   c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+  c.execute("""CREATE TABLE IF NOT EXISTS api_football_daily_usage(
+   usage_day TEXT PRIMARY KEY,request_count INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL)""")
   c.execute("""CREATE TABLE IF NOT EXISTS match_odds_fixture_map(
    match_id INTEGER PRIMARY KEY,provider_fixture_id INTEGER NOT NULL,home_name TEXT DEFAULT '',
    away_name TEXT DEFAULT '',matched_at TEXT NOT NULL,provider TEXT DEFAULT 'api-football',
@@ -1652,6 +1656,19 @@ def _store_match_odds(match_id, rows):
      item["captured_at"],json.dumps(item.get("raw") or {},ensure_ascii=False)))
 
 
+def _claim_daily_odds_request():
+ """Reserve one API-Football call, capped below the free plan's 100/day limit."""
+ today=datetime.now(timezone.utc).date().isoformat()
+ limit=max(1,min(90,int(os.environ.get("API_FOOTBALL_DAILY_BUDGET","80") or "80")))
+ with db() as conn:
+  conn.execute("INSERT OR IGNORE INTO api_football_daily_usage(usage_day,request_count,updated_at) VALUES(?,?,?)",
+   (today,0,_utc_iso()))
+  updated=conn.execute("""UPDATE api_football_daily_usage
+   SET request_count=request_count+1,updated_at=?
+   WHERE usage_day=? AND request_count < ?""",(_utc_iso(),today,limit))
+  return updated.rowcount==1
+
+
 def _claim_odds_poll(poll_key, cache_seconds):
  now_dt=datetime.now(timezone.utc)
  now=_utc_iso(now_dt)
@@ -1692,6 +1709,9 @@ def _latest_odds_rows(match_id, source, earliest=False):
 def _refresh_global_live_odds(provider):
  """Fetch one shared in-play feed and fan it out to every mapped live fixture."""
  poll_key="api_football_odds_live_global"
+ # Live bookmaker odds are intentionally disabled on the free plan.
+ # Match events continue through the separate SportScore feed.
+ return ""
  poll_seconds=max(5,min(60,int(os.environ.get("ODDS_LIVE_POLL_SECONDS","15") or "15")))
  if not _claim_odds_poll(poll_key,poll_seconds):
   return ""
@@ -1734,6 +1754,8 @@ def match_odds_data(mid):
    map_key=f"api_football_odds_fixture_map_{mid}"
    if _claim_odds_poll(map_key,21600):
     try:
+     if not _claim_daily_odds_request():
+      raise OddsProviderError("Günlük ücretsiz oran kotası SRC tarafından korundu; yeni API isteği yapılmadı.")
      resolved=provider.resolve_fixture(match)
      fixture_id=resolved["fixture_id"]
      with db() as conn:
@@ -1752,15 +1774,14 @@ def match_odds_data(mid):
    pre_key=f"api_football_odds_prematch_{mid}"
    if _claim_odds_poll(pre_key,10800):
     try:
+     if not _claim_daily_odds_request():
+      raise OddsProviderError("Günlük ücretsiz oran kotası SRC tarafından korundu; yeni API isteği yapılmadı.")
      _store_match_odds(mid,provider.pre_match_odds(fixture_id))
      _finish_odds_poll(pre_key)
     except Exception as exc:
      _finish_odds_poll(pre_key,str(exc))
      error=str(exc)
-  if fixture_id and match.get("status")=="live":
-   live_error=_refresh_global_live_odds(provider)
-   if live_error:
-    error=live_error
+  # No API-Football in-play odds calls on the free plan.
  except OddsProviderError as exc:
   error=str(exc)
  first_seen=_latest_odds_rows(mid,"prematch",earliest=True)
