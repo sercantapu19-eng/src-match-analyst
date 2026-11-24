@@ -415,9 +415,9 @@ class FootballProvider:
 
         def walk(value):
             if isinstance(value, dict):
-                name = self.pick(value, "name", "team_name", "short_name", "display_name")
-                slug = self.pick(value, "slug", "team_slug")
-                if name and slug:
+                name = self.team_name(value, "")
+                slug = self.pick(value, "slug", "team_slug", "teamSlug", "id", "team_id")
+                if name and slug and not self.is_placeholder_team_name(name):
                     key = (str(name), str(slug))
                     if key not in seen:
                         seen.add(key)
