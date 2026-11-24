@@ -14,6 +14,13 @@ class DailyFixtureSyncTests(unittest.TestCase):
         self.old_db_path = application.DB_PATH
         application.DB_PATH = os.path.join(self.tempdir.name, "daily-sync.db")
         application.init_db()
+        with application.db() as c:
+            c.execute("""CREATE TABLE IF NOT EXISTS user_saved_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                match_id INTEGER NOT NULL,
+                saved_at TEXT NOT NULL
+            )""")
         self.old_token = os.environ.get("RESULT_SYNC_TOKEN")
         os.environ["RESULT_SYNC_TOKEN"] = "test-result-token"
         self.client = application.app.test_client()
