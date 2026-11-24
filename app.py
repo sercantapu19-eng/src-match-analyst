@@ -46,6 +46,36 @@ def team_display(value):
 def goal_side(value):
  return _goal_side_label("2,5 Gol", value)
 
+
+@app.template_filter("market_display")
+def market_display(value):
+ labels = {
+  "match_result": "Maç Sonucu",
+  "goals": "2,5 Gol",
+  "btts": "Karşılıklı Gol",
+  "htft": "İlk Yarı / Maç Sonucu",
+  "first_half_btts": "İlk Yarı Karşılıklı Gol",
+  "second_half_btts": "İkinci Yarı Karşılıklı Gol",
+  "corners": "Korner Alt/Üst",
+ }
+ key = str(value or "").strip().casefold()
+ return labels.get(key, str(value or "Pazar belirtilmedi"))
+
+
+@app.template_filter("selection_display")
+def selection_display(value):
+ labels = {
+  "over": "Üst",
+  "under": "Alt",
+  "var": "Var",
+  "yok": "Yok",
+  "home": "Ev Sahibi",
+  "draw": "Beraberlik",
+  "away": "Deplasman",
+ }
+ key = str(value or "").strip().casefold()
+ return labels.get(key, str(value or "Seçim belirtilmedi"))
+
 @app.before_request
 def enforce_csrf():
  if request.method not in ("POST","PUT","PATCH","DELETE"):
