@@ -852,8 +852,13 @@ def result(mid):
 @app.route("/saved")
 @login_required
 def saved():
- with db() as c:ms=c.execute("SELECT m.* FROM matches m JOIN user_saved_matches s ON s.match_id=m.id WHERE s.user_id=? ORDER BY s.saved_at DESC",(current_user_id(),)).fetchall()
- return render_template("saved.html",matches=ms)
+ with db() as c:
+  uid=current_user_id()
+  ms=c.execute("SELECT m.* FROM matches m JOIN user_saved_matches s ON s.match_id=m.id WHERE s.user_id=? ORDER BY s.saved_at DESC",(uid,)).fetchall()
+  rows=c.execute("""SELECT r.* FROM results r JOIN user_saved_matches s ON s.match_id=r.match_id WHERE s.user_id=? ORDER BY r.match_id,r.id""",(uid,)).fetchall()
+ results_by_match={}
+ for row in rows: results_by_match.setdefault(row["match_id"],[]).append(dict(row))
+ return render_template("saved.html",matches=ms,results_by_match=results_by_match)
 @app.route("/results")
 def results():
  with db() as c:
