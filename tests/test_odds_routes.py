@@ -89,7 +89,8 @@ class OddsRouteTests(unittest.TestCase):
         self.assertEqual(payload["first_seen"][0]["odd"], "2.1")
         self.assertEqual(payload["live"][0]["odd"], "2.25")
         self.assertEqual(FakeOddsProvider.pre_calls, 1)
-        self.assertEqual(FakeOddsProvider.live_calls, 1)
+        self.assertEqual(FakeOddsProvider.live_calls, 0)
+        self.assertEqual(payload["live"], [])
         with application.db() as conn:
             count = conn.execute(
                 "SELECT COUNT(*) AS count FROM match_odds_snapshots WHERE match_id=?",
@@ -101,6 +102,17 @@ class OddsRouteTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(count, 2)
         self.assertEqual(mapping["provider_fixture_id"], 98765)
+        with application.db() as conn:
+            usage = conn.execute("SELECT request_count FROM api_football_daily_usage").fetchone()["request_count"]
+        self.assertEqual(usage, 2)  # one fixture lookup + one pre-match odds request
+
+    def test_daily_free_quota_stops_before_making_more_provider_calls(self):
+        os.environ["API_FOOTBALL_DAILY_BUDGET"] = "1"
+        self.assertTrue(application._claim_daily_odds_request())
+        self.assertFalse(application._claim_daily_odds_request())
+        with application.db() as conn:
+            usage = conn.execute("SELECT request_count FROM api_football_daily_usage").fetchone()["request_count"]
+        self.assertEqual(usage, 1)
 
 
 if __name__ == "__main__":
