@@ -1688,6 +1688,31 @@ def _latest_odds_rows(match_id, source, earliest=False):
  return [dict(row) for row in rows]
 
 
+def _refresh_global_live_odds(provider):
+ """Fetch one shared in-play feed and fan it out to every mapped live fixture."""
+ poll_key="api_football_odds_live_global"
+ if not _claim_odds_poll(poll_key,30):
+  return ""
+ try:
+  rows=provider.live_odds()
+  with db() as conn:
+   mappings=conn.execute("""SELECT x.match_id,x.provider_fixture_id FROM match_odds_fixture_map x
+    JOIN matches m ON m.id=x.match_id WHERE m.status='live'""").fetchall()
+  by_fixture={str(row["provider_fixture_id"]):int(row["match_id"]) for row in mappings}
+  grouped={}
+  for item in rows:
+   match_id=by_fixture.get(str(item.get("fixture_id") or ""))
+   if match_id is not None:
+    grouped.setdefault(match_id,[]).append(item)
+  for match_id,items in grouped.items():
+   _store_match_odds(match_id,items)
+  _finish_odds_poll(poll_key)
+  return ""
+ except Exception as exc:
+  _finish_odds_poll(poll_key,str(exc))
+  return str(exc)
+
+
 @app.get("/match/<int:mid>/odds-data")
 def match_odds_data(mid):
  """Return timestamped bookmaker odds; never substitute model predictions for prices."""
@@ -1704,15 +1729,24 @@ def match_odds_data(mid):
  fixture_id=mapping["provider_fixture_id"] if mapping else None
  try:
   if not fixture_id:
-   resolved=provider.resolve_fixture(match)
-   fixture_id=resolved["fixture_id"]
-   with db() as conn:
-    conn.execute("""INSERT INTO match_odds_fixture_map(match_id,provider_fixture_id,home_name,away_name,matched_at,provider)
-     VALUES(?,?,?,?,?,'api-football') ON CONFLICT(match_id) DO UPDATE SET
-     provider_fixture_id=excluded.provider_fixture_id,home_name=excluded.home_name,
-     away_name=excluded.away_name,matched_at=excluded.matched_at,provider=excluded.provider""",
-     (mid,fixture_id,resolved["home"],resolved["away"],_utc_iso()))
-  if match.get("status") in ("scheduled","live","finished"):
+   map_key=f"api_football_odds_fixture_map_{mid}"
+   if _claim_odds_poll(map_key,21600):
+    try:
+     resolved=provider.resolve_fixture(match)
+     fixture_id=resolved["fixture_id"]
+     with db() as conn:
+      conn.execute("""INSERT INTO match_odds_fixture_map(match_id,provider_fixture_id,home_name,away_name,matched_at,provider)
+       VALUES(?,?,?,?,?,'api-football') ON CONFLICT(match_id) DO UPDATE SET
+       provider_fixture_id=excluded.provider_fixture_id,home_name=excluded.home_name,
+       away_name=excluded.away_name,matched_at=excluded.matched_at,provider=excluded.provider""",
+       (mid,fixture_id,resolved["home"],resolved["away"],_utc_iso()))
+     _finish_odds_poll(map_key)
+    except Exception as exc:
+     _finish_odds_poll(map_key,str(exc))
+     error=str(exc)
+   else:
+    error="Bu maç için sağlayıcı fikstür eşleşmesi bekleniyor; tekrar deneme aralığı uygulanıyor."
+  if fixture_id and match.get("status") in ("scheduled","live","finished"):
    pre_key=f"api_football_odds_prematch_{mid}"
    if _claim_odds_poll(pre_key,10800):
     try:
@@ -1721,15 +1755,10 @@ def match_odds_data(mid):
     except Exception as exc:
      _finish_odds_poll(pre_key,str(exc))
      error=str(exc)
-  if match.get("status")=="live":
-   live_key=f"api_football_odds_live_{mid}"
-   if _claim_odds_poll(live_key,15):
-    try:
-     _store_match_odds(mid,provider.live_odds(fixture_id))
-     _finish_odds_poll(live_key)
-    except Exception as exc:
-     _finish_odds_poll(live_key,str(exc))
-     error=str(exc)
+  if fixture_id and match.get("status")=="live":
+   live_error=_refresh_global_live_odds(provider)
+   if live_error:
+    error=live_error
  except OddsProviderError as exc:
   error=str(exc)
  first_seen=_latest_odds_rows(mid,"prematch",earliest=True)
