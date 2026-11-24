@@ -261,5 +261,23 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(provider._normalize_search_name("İstanbul Başakşehir Futbol Kulübü"), "basaksehir")
         self.assertEqual(provider._normalize_search_name("Arca Çorum FK"), "corum")
 
+
+    def test_live_minute_parser_accepts_additional_widget_clock_shapes(self):
+        provider = FootballProvider()
+        rows = provider.parse_fixtures_payload({
+            "matches": [
+                {"id": "a", "home": "A", "away": "B", "status": "live",
+                 "status": {"short": "1H", "elapsedTime": 28}},
+                {"id": "b", "home": "C", "away": "D", "status": "live",
+                 "time": {"display": "1st Half · 37:18"}},
+                {"id": "c", "home": "E", "away": "F", "status": "live",
+                 "timer": {"text": "Live 45+3'"}},
+                {"id": "d", "home": "G", "away": "H", "status": "live",
+                 "status_text": "Second Half - 71 min"}
+            ]
+        })
+        self.assertEqual([row["elapsed_minute"] for row in rows], [28, 37, "45+3", 71])
+        self.assertEqual([row["status"] for row in rows], ["live"] * 4)
+
 if __name__ == "__main__":
     unittest.main()
