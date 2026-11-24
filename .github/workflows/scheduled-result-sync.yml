@@ -29,18 +29,20 @@ jobs:
             echo "::error::GitHub Actions secret RESULT_SYNC_TOKEN is not configured."
             exit 1
           fi
-      - name: Refresh recent results and today's fixtures in daily batches
+      - name: Allow Render auto-deploy to finish after a push
+        if: github.event_name == 'push'
+        run: sleep 75
+      - name: Refresh yesterday's results and today's fixtures
         env:
           SYNC_TOKEN: ${{ secrets.RESULT_SYNC_TOKEN }}
         run: |
           TODAY="$(TZ=Europe/Istanbul date +%F)"
           YESTERDAY="$(TZ=Europe/Istanbul date -d '1 day ago' +%F)"
-          TWO_DAYS_AGO="$(TZ=Europe/Istanbul date -d '2 days ago' +%F)"
 
-          for DAY in "$TWO_DAYS_AGO" "$YESTERDAY" "$TODAY"; do
+          for DAY in "$YESTERDAY" "$TODAY"; do
             echo "Refreshing fixtures and results for $DAY"
             curl --fail-with-body --silent --show-error \
-              --retry 1 --retry-delay 3 --max-time 25 \
+              --retry 0 --max-time 90 \
               -X POST "https://src-match-analyst.onrender.com/sync/results/refresh?date=$DAY" \
               -H "Authorization: Bearer $SYNC_TOKEN" \
               -H "Content-Type: application/json" \
