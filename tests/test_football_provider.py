@@ -297,5 +297,31 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(events[5]["detail"],"↓ Shoji Fujio  ↑ Mao Hosoya")
         self.assertEqual(events[7]["label"],"İkinci yarı başladı")
 
+
+    def test_widget_match_parser_preserves_slug_separately_from_provider_id(self):
+        provider=FootballProvider()
+        rows=provider.parse_fixtures_payload({"matches":[{
+            "id":7420812,"slug":"newcastle-jets-vs-kashiwa-reysol",
+            "home":{"name":"Newcastle Jets"},"away":{"name":"Kashiwa Reysol"},
+            "status":"live","status_text":"2nd Half 76 min",
+            "home_score":3,"away_score":2,"halftime":{"home":1,"away":1}
+        }]})
+        self.assertEqual(rows[0]["provider_id"],"7420812")
+        self.assertEqual(rows[0]["slug"],"newcastle-jets-vs-kashiwa-reysol")
+        self.assertEqual(rows[0]["elapsed_minute"],76)
+        self.assertEqual(rows[0]["ht_home"],1)
+        self.assertEqual(rows[0]["ht_away"],1)
+
+    def test_live_fixture_match_requires_unique_home_away_pair_and_slug(self):
+        provider=FootballProvider()
+        fixtures=[
+            {"home":"Newcastle Jets","away":"Kashiwa Reysol","status":"live","slug":"correct"},
+            {"home":"Newcastle Jets","away":"Kashiwa Reysol","status":"live","slug":"duplicate"}
+        ]
+        self.assertIsNone(provider.find_live_fixture(fixtures,"Newcastle Jets","Kashiwa Reysol"))
+        fixtures.pop()
+        self.assertEqual(provider.find_live_fixture(fixtures,"Newcastle Jets","Kashiwa Reysol")["slug"],"correct")
+        self.assertIsNone(provider.find_live_fixture(fixtures,"Kashiwa Reysol","Newcastle Jets"))
+
 if __name__ == "__main__":
     unittest.main()

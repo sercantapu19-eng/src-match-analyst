@@ -1044,33 +1044,38 @@ def detail(mid):
 def match_live_data(mid):
  # Read-only endpoint: never modifies matches, saved selections, or result records.
  with db() as c:
-  row=c.execute("SELECT id,status,status_short,elapsed_minute,home_goals,away_goals,ht_home,ht_away,external_id FROM matches WHERE id=?",(mid,)).fetchone()
+  row=c.execute("SELECT id,home,away,kickoff,status,status_short,elapsed_minute,home_goals,away_goals,ht_home,ht_away,external_id FROM matches WHERE id=?",(mid,)).fetchone()
  if not row: return jsonify({"error":"Maç bulunamadı."}),404
  match=dict(row)
  if match["status"]!="live":
   return jsonify({"status":match["status"],"events":[],"minute":match["elapsed_minute"]})
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-  payload=provider.match_detail(match.get("external_id"))
+  live_fixtures=provider.live_matches(limit=50)
+  fixture=provider.find_live_fixture(live_fixtures,match["home"],match["away"])
+  if not fixture:
+   return jsonify({"status":"unavailable","minute":match.get("elapsed_minute"),"events":[],
+    "events_available":False,"message":"Bu karşılaşma canlı sağlayıcı akışında benzersiz olarak eşleştirilemedi."}),200
+  payload=provider.match_detail(fixture["slug"])
   events=provider.parse_match_events(payload)
-  fixtures=provider.parse_fixtures_payload(payload)
-  fixture=fixtures[0] if fixtures else {}
-  minute=fixture.get("elapsed_minute") or match.get("elapsed_minute")
-  code=str(fixture.get("status_short") or match.get("status_short") or "").upper()
-  period="halftime" if code in ("HT","INT","BREAK","BT") else "finished" if code in ("FT","AET","PEN") else "second_half" if code in ("2H","2ND_HALF") else "first_half" if code in ("1H","1ST_HALF") else "live"
+  minute=fixture.get("elapsed_minute")
+  code=str(fixture.get("status_short") or "").upper().replace(" ","_")
+  period="halftime" if code in ("HT","INT","BREAK","BT") else "finished" if code in ("FT","AET","PEN","FULL_TIME") else "second_half" if code in ("2H","2ND_HALF","SECOND_HALF") else "first_half" if code in ("1H","1ST_HALF","FIRST_HALF") else "live"
   hg,ag=fixture.get("home_goals"),fixture.get("away_goals")
   hh,ha=fixture.get("ht_home"),fixture.get("ht_away")
   return jsonify({"status":period,"minute":minute,
    "minute_label":"Devre Arası" if period=="halftime" else "Maç Tamamlandı" if period=="finished" else
     (f"{minute}' · {'2. Yarı' if period=='second_half' else '1. Yarı' if period=='first_half' else 'Canlı'}" if minute is not None else
      ("2. Yarı" if period=="second_half" else "1. Yarı" if period=="first_half" else "Canlı dakika bekleniyor")),
-   "score":f"{hg} – {ag}" if hg is not None and ag is not None else (f"{match['home_goals']} – {match['away_goals']}" if match["home_goals"] is not None else None),
-   "ht_score":f"{hh} – {ha}" if hh is not None and ha is not None else (f"{match['ht_home']} – {match['ht_away']}" if match["ht_home"] is not None else None),
+   "score":f"{hg} – {ag}" if hg is not None and ag is not None else
+    (f"{match['home_goals']} – {match['away_goals']}" if match["home_goals"] is not None else None),
+   "ht_score":f"{hh} – {ha}" if hh is not None and ha is not None else
+    (f"{match['ht_home']} – {match['ht_away']}" if match["ht_home"] is not None else None),
    "events":events,"events_available":bool(events)})
  except ProviderError as exc:
   app.logger.warning("Live detail unavailable for match %s: %s",mid,exc)
   return jsonify({"status":"unavailable","minute":match.get("elapsed_minute"),"events":[],
-   "events_available":False,"message":"Canlı olay verisi şu anda alınamıyor."}),502
+   "events_available":False,"message":"Canlı maç verisi şu anda alınamıyor."}),502
 
 @app.post("/match/<int:mid>/status")
 @admin_required
