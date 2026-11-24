@@ -1,6 +1,6 @@
 import os, sqlite3, json, time, re, secrets, hmac
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from football_provider import FootballProvider, ProviderError
@@ -206,6 +206,22 @@ def init_db():
     created_at TEXT NOT NULL,updated_at TEXT NOT NULL,team_names TEXT DEFAULT '[]',team_index INTEGER DEFAULT 0)""")
    c.execute("ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS team_names TEXT DEFAULT '[]'")
    c.execute("ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS team_index INTEGER DEFAULT 0")
+   c.execute("""CREATE TABLE IF NOT EXISTS provider_poll_state(
+    poll_key TEXT PRIMARY KEY,payload TEXT DEFAULT '',fetched_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '')""")
+   c.execute("""CREATE TABLE IF NOT EXISTS match_live_state(
+    match_id BIGINT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,provider_slug TEXT DEFAULT '',
+    status TEXT DEFAULT 'live',minute TEXT,home_score INTEGER,away_score INTEGER,ht_home INTEGER,ht_away INTEGER,
+    last_success_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '')""")
+   c.execute("""CREATE TABLE IF NOT EXISTS match_events(
+    id BIGSERIAL PRIMARY KEY,match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    event_uid TEXT NOT NULL,event_type TEXT NOT NULL,event_status TEXT DEFAULT 'confirmed',
+    related_event_uid TEXT DEFAULT '',team_side TEXT DEFAULT '',minute TEXT,extra_minute INTEGER,
+    sort_key INTEGER DEFAULT 999999,primary_player TEXT DEFAULT '',secondary_player TEXT DEFAULT '',
+    detail_note TEXT DEFAULT '',icon TEXT DEFAULT '',label TEXT DEFAULT '',counts_for_score BOOLEAN DEFAULT FALSE,
+    raw_meta TEXT DEFAULT '{}',first_seen_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+    UNIQUE(match_id,event_uid))""")
+   c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+   c.execute("CREATE INDEX IF NOT EXISTS idx_match_live_state_status ON match_live_state(status)")
   migration=migrate_legacy_sqlite_to_postgres()
   if migration["status"] == "legacy_file_not_found":
    app.logger.warning("Legacy data transfer requires a reachable SQLite file or a separate export.")
@@ -232,6 +248,199 @@ def init_db():
   job_cols={r[1] for r in c.execute("PRAGMA table_info(sync_jobs)").fetchall()}
   for name,typ in [("fetched_count","INTEGER DEFAULT 0"),("skipped_count","INTEGER DEFAULT 0"),("team_names","TEXT DEFAULT '[]'"),("team_index","INTEGER DEFAULT 0")]:
    if name not in job_cols: c.execute(f"ALTER TABLE sync_jobs ADD COLUMN {name} {typ}")
+  c.execute("""CREATE TABLE IF NOT EXISTS provider_poll_state(
+   poll_key TEXT PRIMARY KEY,payload TEXT DEFAULT '',fetched_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '')""")
+  c.execute("""CREATE TABLE IF NOT EXISTS match_live_state(
+   match_id INTEGER PRIMARY KEY,provider_slug TEXT DEFAULT '',status TEXT DEFAULT 'live',
+   minute TEXT,home_score INTEGER,away_score INTEGER,ht_home INTEGER,ht_away INTEGER,
+   last_success_at TEXT,lease_until TEXT,last_error TEXT DEFAULT '',
+   FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
+  c.execute("""CREATE TABLE IF NOT EXISTS match_events(
+   id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL,event_uid TEXT NOT NULL,event_type TEXT NOT NULL,
+   event_status TEXT DEFAULT 'confirmed',related_event_uid TEXT DEFAULT '',team_side TEXT DEFAULT '',
+   minute TEXT,extra_minute INTEGER,sort_key INTEGER DEFAULT 999999,primary_player TEXT DEFAULT '',
+   secondary_player TEXT DEFAULT '',detail_note TEXT DEFAULT '',icon TEXT DEFAULT '',label TEXT DEFAULT '',
+   counts_for_score INTEGER DEFAULT 0,raw_meta TEXT DEFAULT '{}',first_seen_at TEXT NOT NULL,
+   last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+   FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,UNIQUE(match_id,event_uid))""")
+  c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+  c.execute("CREATE INDEX IF NOT EXISTS idx_match_live_state_status ON match_live_state(status)")
+
+
+LIVE_FEED_CACHE_SECONDS = 60
+MATCH_EVENT_CACHE_SECONDS = 60
+LIVE_REFRESH_LEASE_SECONDS = 25
+
+
+def _utc_iso(value=None):
+ value=value or datetime.now(timezone.utc)
+ return value.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def _is_cache_fresh(value, seconds, now=None):
+ if not value:
+  return False
+ try:
+  parsed=datetime.fromisoformat(str(value).replace("Z","+00:00"))
+  if parsed.tzinfo is None:
+   parsed=parsed.replace(tzinfo=timezone.utc)
+  age=((now or datetime.now(timezone.utc))-parsed.astimezone(timezone.utc)).total_seconds()
+  return -5 <= age < seconds
+ except (TypeError,ValueError,OverflowError):
+  return False
+
+
+def _cached_sportscore_live_feed(provider):
+ """Share one SportScore live-list fetch across every viewer and match page."""
+ poll_key="sportscore_live_matches"
+ now_dt=datetime.now(timezone.utc)
+ now=_utc_iso(now_dt)
+ lease=_utc_iso(now_dt+timedelta(seconds=LIVE_REFRESH_LEASE_SECONDS))
+ cached_payload=""
+ claimed=False
+ with db() as c:
+  c.execute("INSERT OR IGNORE INTO provider_poll_state(poll_key) VALUES(?)",(poll_key,))
+  state=c.execute("SELECT payload,fetched_at,lease_until FROM provider_poll_state WHERE poll_key=?",(poll_key,)).fetchone()
+  cached_payload=(state["payload"] or "") if state else ""
+  if state and _is_cache_fresh(state["fetched_at"],LIVE_FEED_CACHE_SECONDS,now_dt):
+   try:
+    parsed=json.loads(cached_payload or "[]")
+    return parsed if isinstance(parsed,list) else []
+   except (TypeError,ValueError):
+    cached_payload=""
+  cursor=c.execute("""UPDATE provider_poll_state SET lease_until=?
+   WHERE poll_key=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,poll_key,now))
+  claimed=cursor.rowcount>0
+ if not claimed:
+  try:
+   parsed=json.loads(cached_payload or "[]")
+   return parsed if isinstance(parsed,list) else []
+  except (TypeError,ValueError):
+   return []
+ try:
+  fixtures=provider.live_matches(limit=50)
+  payload=json.dumps(fixtures,ensure_ascii=False,separators=(",",":"))
+  completed=_utc_iso()
+  with db() as c:
+   c.execute("""UPDATE provider_poll_state SET payload=?,fetched_at=?,lease_until=NULL,last_error=''
+    WHERE poll_key=?""",(payload,completed,poll_key))
+  return fixtures
+ except Exception as exc:
+  with db() as c:
+   c.execute("UPDATE provider_poll_state SET lease_until=NULL,last_error=? WHERE poll_key=?",(str(exc)[:500],poll_key))
+  try:
+   parsed=json.loads(cached_payload or "[]")
+   if isinstance(parsed,list) and parsed:
+    return parsed
+  except (TypeError,ValueError):
+   pass
+  raise
+
+
+def _load_match_event_rows(c, match_id):
+ rows=c.execute("""SELECT event_uid,event_type,event_status,related_event_uid,team_side,minute,
+  extra_minute,sort_key,primary_player,secondary_player,detail_note,icon,label,counts_for_score,
+  first_seen_at,last_seen_at FROM match_events WHERE match_id=? ORDER BY sort_key,id""",(match_id,)).fetchall()
+ result=[]
+ for row in rows:
+  item=dict(row)
+  item["kind"]=item.pop("event_type")
+  item["detail"]=item.pop("detail_note") or ""
+  item["minute_label"]=f"{item['minute']}′" if item.get("minute") not in (None,"") else "—"
+  item["team"]=item.pop("team_side") or ""
+  result.append(item)
+ return result
+
+
+def _store_match_events(match_id, events, home, away):
+ provider=FootballProvider()
+ home_key=provider._normalize_search_name(home)
+ away_key=provider._normalize_search_name(away)
+ now=_utc_iso()
+ with db() as c:
+  for event in events:
+   team_key=provider._normalize_search_name(event.get("team"))
+   side=event.get("team_side") or ""
+   if side not in ("home","away"):
+    if team_key and team_key==home_key:
+     side="home"
+    elif team_key and team_key==away_key:
+     side="away"
+   raw_meta=json.dumps(event.get("raw_meta") or {},ensure_ascii=False,separators=(",",":"))
+   c.execute("""INSERT INTO match_events(
+    match_id,event_uid,event_type,event_status,related_event_uid,team_side,minute,extra_minute,sort_key,
+    primary_player,secondary_player,detail_note,icon,label,counts_for_score,raw_meta,first_seen_at,last_seen_at,updated_at
+   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   ON CONFLICT(match_id,event_uid) DO UPDATE SET
+    event_type=excluded.event_type,event_status=excluded.event_status,
+    related_event_uid=excluded.related_event_uid,team_side=excluded.team_side,minute=excluded.minute,
+    extra_minute=excluded.extra_minute,sort_key=excluded.sort_key,primary_player=excluded.primary_player,
+    secondary_player=excluded.secondary_player,detail_note=excluded.detail_note,icon=excluded.icon,
+    label=excluded.label,counts_for_score=excluded.counts_for_score,raw_meta=excluded.raw_meta,
+    last_seen_at=excluded.last_seen_at,updated_at=excluded.updated_at""",(
+    match_id,event.get("event_uid"),event.get("kind") or "unknown",event.get("event_status") or "confirmed",
+    event.get("related_event_uid") or "",side,event.get("minute"),event.get("extra_minute"),
+    event.get("sort_key",999999),event.get("primary_player") or "",event.get("secondary_player") or "",
+    event.get("detail") or "",event.get("icon") or "",event.get("label") or "",
+    bool(event.get("counts_for_score")),raw_meta,now,now,now))
+  # Only link a cancelled goal when the provider supplies an explicit related event ID.
+  for event in events:
+   related=event.get("related_event_uid")
+   if related and event.get("event_status")=="cancelled":
+    c.execute("""UPDATE match_events SET event_status='cancelled',counts_for_score=FALSE,updated_at=?
+     WHERE match_id=? AND event_uid=? AND event_type IN ('goal','own_goal','penalty_scored')""",(now,match_id,related))
+
+
+def _claim_match_event_refresh(match_id, provider_slug):
+ now_dt=datetime.now(timezone.utc)
+ now=_utc_iso(now_dt)
+ lease=_utc_iso(now_dt+timedelta(seconds=LIVE_REFRESH_LEASE_SECONDS))
+ with db() as c:
+  c.execute("INSERT OR IGNORE INTO match_live_state(match_id) VALUES(?)",(match_id,))
+  state=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(match_id,)).fetchone()
+  if state and _is_cache_fresh(state["last_success_at"],MATCH_EVENT_CACHE_SECONDS,now_dt):
+   return False,dict(state)
+  cursor=c.execute("""UPDATE match_live_state SET lease_until=?,provider_slug=COALESCE(NULLIF(?,''),provider_slug)
+   WHERE match_id=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,provider_slug or "",match_id,now))
+  state=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(match_id,)).fetchone()
+  return cursor.rowcount>0,dict(state) if state else {}
+
+
+def _finish_match_event_refresh(match_id, *, provider_slug="", status="", minute=None,
+ home_score=None, away_score=None, ht_home=None, ht_away=None, error=""):
+ now=_utc_iso()
+ with db() as c:
+  c.execute("""UPDATE match_live_state SET
+   provider_slug=COALESCE(NULLIF(?,''),provider_slug),status=COALESCE(NULLIF(?,''),status),
+   minute=COALESCE(?,minute),home_score=COALESCE(?,home_score),away_score=COALESCE(?,away_score),
+   ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away),
+   last_success_at=CASE WHEN ?='' THEN ? ELSE last_success_at END,
+   last_error=?,lease_until=NULL WHERE match_id=?""",
+   (provider_slug or "",status or "",minute,home_score,away_score,ht_home,ht_away,error,now,error[:500],match_id))
+
+
+def _live_period(status_short):
+ code=str(status_short or "").upper().replace(" ","_")
+ if code in ("HT","INT","BREAK","BT"):
+  return "halftime"
+ if code in ("FT","AET","PEN","FINISHED"):
+  return "finished"
+ if code in ("2H","2ND_HALF","SECOND_HALF"):
+  return "second_half"
+ if code in ("1H","1ST_HALF","FIRST_HALF"):
+  return "first_half"
+ return "live"
+
+
+def _live_minute_label(period, minute):
+ if period=="halftime":
+  return "Devre Arası"
+ if period=="finished":
+  return "Maç Tamamlandı"
+ if minute not in (None,""):
+  return f"{minute}′ · {'2. Yarı' if period=='second_half' else '1. Yarı' if period=='first_half' else 'Canlı'}"
+ return "2. Yarı" if period=="second_half" else "1. Yarı" if period=="first_half" else "Canlı dakika bekleniyor"
+
 
 def sync_prediction_rows(c,mid):
  m=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
