@@ -822,7 +822,7 @@ class FootballProvider:
             }
             output.append({
                 "event_uid": event_uid,
-                "related_event_uid": "sportscore:" + str(related_id).strip() if related_id not in (None, "") else "",
+                "related_event_uid": (str(related_id).strip() if str(related_id).strip().startswith("sportscore:") else "sportscore:" + str(related_id).strip()) if related_id not in (None, "") else "",
                 "event_status": event_status,
                 "minute": minute_text,
                 "extra_minute": extra_minute,
