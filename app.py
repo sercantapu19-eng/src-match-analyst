@@ -385,6 +385,52 @@ def _cached_sportscore_date_fixtures(provider, day):
    pass
   raise
 
+
+def _cached_sportscore_team_fixtures(provider, match_id, team_name):
+ """Share a team-schedule lookup used to recover a match slug omitted by /fixtures/."""
+ poll_key=f"sportscore_team_fixtures_match:{int(match_id)}"
+ now_dt=datetime.now(timezone.utc)
+ now=_utc_iso(now_dt)
+ lease=_utc_iso(now_dt+timedelta(seconds=LIVE_REFRESH_LEASE_SECONDS))
+ cached_payload=""
+ with db() as c:
+  c.execute("INSERT OR IGNORE INTO provider_poll_state(poll_key) VALUES(?)",(poll_key,))
+  state=c.execute("SELECT payload,fetched_at,lease_until FROM provider_poll_state WHERE poll_key=?",(poll_key,)).fetchone()
+  cached_payload=(state["payload"] or "") if state else ""
+  if state and _is_cache_fresh(state["fetched_at"],LIVE_FEED_CACHE_SECONDS,now_dt):
+   try:
+    parsed=json.loads(cached_payload or "[]")
+    return parsed if isinstance(parsed,list) else []
+   except (TypeError,ValueError):
+    cached_payload=""
+  cursor=c.execute("""UPDATE provider_poll_state SET lease_until=?
+   WHERE poll_key=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,poll_key,now))
+  claimed=cursor.rowcount>0
+ if not claimed:
+  try:
+   parsed=json.loads(cached_payload or "[]")
+   return parsed if isinstance(parsed,list) else []
+  except (TypeError,ValueError):
+   return []
+ try:
+  fixtures=provider.team_fixtures_for_team(team_name,limit=30)
+  payload=json.dumps(fixtures,ensure_ascii=False,separators=(",",":"))
+  with db() as c:
+   c.execute("""UPDATE provider_poll_state SET payload=?,fetched_at=?,lease_until=NULL,last_error=''
+    WHERE poll_key=?""",(payload,_utc_iso(),poll_key))
+  return fixtures
+ except Exception as exc:
+  with db() as c:
+   c.execute("UPDATE provider_poll_state SET fetched_at=?,lease_until=NULL,last_error=? WHERE poll_key=?",
+    (_utc_iso(),str(exc)[:500],poll_key))
+  try:
+   parsed=json.loads(cached_payload or "[]")
+   if isinstance(parsed,list) and parsed:
+    return parsed
+  except (TypeError,ValueError):
+   pass
+  raise
+
 def _load_match_event_rows(c, match_id):
  rows=c.execute("""SELECT event_uid,event_type,event_status,related_event_uid,team_side,minute,
   extra_minute,sort_key,primary_player,secondary_player,detail_note,icon,label,counts_for_score,
@@ -1542,6 +1588,23 @@ def match_live_data(mid):
     if fixture:
      app.logger.info("SportScore live fixture matched via date feed: match_id=%s provider_id=%s",
       mid,fixture.get("id") or fixture.get("slug"))
+   # /api/v1/fixtures/ can identify the correct match but omit its detail slug.
+   # Recover that slug from the team's own schedule before requesting match events.
+   if fixture and not (fixture.get("slug") or fixture.get("id")):
+    for team_name in (match.get("home"),match.get("away")):
+     team_fixtures=_cached_sportscore_team_fixtures(provider,mid,team_name)
+     live_candidates=[dict(item,status="live") for item in team_fixtures if isinstance(item,dict)]
+     resolved=provider.find_matching_live_fixture(
+      live_candidates,match.get("home"),match.get("away"),match.get("kickoff"))
+     if resolved and (resolved.get("slug") or resolved.get("id")):
+      combined=dict(resolved)
+      for key,value in fixture.items():
+       if value not in (None,""):
+        combined[key]=value
+      fixture=combined
+      app.logger.info("SportScore match slug resolved from team schedule: match_id=%s slug=%s",
+       mid,fixture.get("slug") or fixture.get("id"))
+      break
   except ProviderError as exc:
    app.logger.warning("SportScore live-list unavailable for match %s: %s",mid,exc)
   except Exception:
