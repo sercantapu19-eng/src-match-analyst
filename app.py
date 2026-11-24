@@ -890,6 +890,8 @@ def coupon_center():
     market_labels = {"match_result":"Maç Sonucu","goals":"2,5 Gol","btts":"KG Var/Yok",
         "htft":"İY/MS","first_half_btts":"1. Yarı KG","second_half_btts":"2. Yarı KG","corners":"Korner"}
     with db() as c:
+        uid = current_user_id() or 0
+        saved_predictions = {(row["match_id"], row["market_key"], row["selection_key"]) for row in c.execute("SELECT match_id,market_key,selection_key FROM user_saved_predictions WHERE user_id=?", (uid,)).fetchall()} if uid else set()
         fixtures = c.execute("""SELECT * FROM matches
             WHERE status='scheduled' AND datetime(kickoff)>=datetime('now')
             ORDER BY kickoff,id""").fetchall()
@@ -906,17 +908,17 @@ def coupon_center():
         selections=[]
         for option,label,odd_key in (("1","MS 1","odds_home"),("X","MS X","odds_draw"),("2","MS 2","odds_away")):
             value=(probabilities.get("match_result") or {}).get(option)
-            if value is not None: selections.append(("match_result",label,value,match[odd_key]))
+            if value is not None: selections.append(("match_result",option,label,value,match[odd_key]))
         goals=(probabilities.get("goals") or {}).get("2.5") or {}
         for option,label in (("over","Üst 2,5"),("under","Alt 2,5")):
-            if goals.get(option) is not None: selections.append(("goals",label,goals[option],None))
+            if goals.get(option) is not None: selections.append(("goals",option,label,goals[option],None))
         for option,label in (("Var","KG Var"),("Yok","KG Yok")):
             value=(probabilities.get("btts") or {}).get(option)
-            if value is not None: selections.append(("btts",label,value,None))
+            if value is not None: selections.append(("btts",option,label,value,None))
         for key,label in (("htft","İY/MS"),("first_half_btts","1. Yarı KG"),("second_half_btts","2. Yarı KG")):
             for option,value in (probabilities.get(key) or {}).items():
-                selections.append((key,option if key=="htft" else label+" "+option,value,None))
-        for key,label,probability,raw_odds in selections:
+                selections.append((key,option,option if key=="htft" else label+" "+option,value,None))
+        for key,selection_key,label,probability,raw_odds in selections:
             if market not in ("all",key): continue
             try: probability=float(probability)
             except (TypeError,ValueError): continue
@@ -926,7 +928,8 @@ def coupon_center():
             row={"id":match["id"],"home":match["home"],"away":match["away"],
                 "league":match["league"] or "Lig belirtilmedi","kickoff":match["kickoff"],
                 "market":market_labels.get(key,key),"selection":label,
-                "probability":round(probability*100,1),"odds":odds}
+                "probability":round(probability*100,1),"odds":odds,"saved":(match["id"],key,str(selection_key)) in saved_predictions,
+                "market_key":key,"selection_key":str(selection_key)}
             if odds is None: waiting.append(row)
             elif min_odds <= odds <= max_odds: ready.append(row)
     ready.sort(key=lambda row:(-row["probability"],row["kickoff"]))
@@ -949,6 +952,44 @@ def new_match():
   return redirect(url_for("index"))
  return render_template("form.html",data={})
 
+@app.post("/match/<int:mid>/save-prediction")
+@login_required
+def save_prediction(mid):
+    market_key = (request.form.get("market_key") or "").strip()
+    selection_key = (request.form.get("selection_key") or "").strip()
+    allowed = {"match_result", "goals", "btts", "htft", "first_half_btts", "second_half_btts"}
+    if market_key not in allowed or not selection_key:
+        return jsonify({"ok": False, "error": "Geçersiz tahmin seçimi."}), 400
+    with db() as c:
+        match = c.execute("SELECT market_probabilities,status FROM matches WHERE id=?", (mid,)).fetchone()
+        if not match:
+            return jsonify({"ok": False, "error": "Maç bulunamadı."}), 404
+        try:
+            probabilities = json.loads(match["market_probabilities"] or "{}")
+        except (TypeError, ValueError):
+            probabilities = {}
+        market_data = probabilities.get(market_key) or {}
+        if market_key == "goals":
+            market_data = market_data.get("2.5") or {}
+        if selection_key not in market_data:
+            return jsonify({"ok": False, "error": "Bu tahmin maçta bulunamadı."}), 400
+        c.execute("""INSERT INTO user_saved_predictions(user_id,match_id,market_key,selection_key,saved_at)
+            VALUES(?,?,?,?,?) ON CONFLICT(user_id,match_id,market_key,selection_key) DO NOTHING""",
+            (current_user_id(), mid, market_key, selection_key, datetime.utcnow().isoformat()))
+    return jsonify({"ok": True, "saved": True, "match_id": mid, "market_key": market_key, "selection_key": selection_key})
+
+
+@app.post("/match/<int:mid>/unsave-prediction")
+@login_required
+def unsave_prediction(mid):
+    market_key = (request.form.get("market_key") or "").strip()
+    selection_key = (request.form.get("selection_key") or "").strip()
+    with db() as c:
+        c.execute("DELETE FROM user_saved_predictions WHERE user_id=? AND match_id=? AND market_key=? AND selection_key=?",
+            (current_user_id(), mid, market_key, selection_key))
+    return jsonify({"ok": True, "saved": False})
+
+
 @app.post("/match/<int:mid>/save")
 @login_required
 def save(mid):
@@ -957,6 +998,7 @@ def save(mid):
   if c.execute("SELECT 1 FROM matches WHERE id=?",(mid,)).fetchone():
    c.execute("INSERT INTO user_saved_matches(user_id,match_id,saved_at) VALUES(?,?,?) ON CONFLICT(user_id,match_id) DO NOTHING",(uid,mid,datetime.utcnow().isoformat()))
  flash("Maç kaydedildi. Kaydedilen maçlar bölümünden her zaman ulaşabilirsin.","success")
+ if request.args.get("next") == "coupon": return redirect(url_for("coupon_center"))
  return redirect(url_for("detail",mid=mid))
 @app.post("/match/<int:mid>/unsave")
 @login_required
@@ -1001,9 +1043,20 @@ def saved():
   uid=current_user_id()
   ms=c.execute("SELECT m.* FROM matches m JOIN user_saved_matches s ON s.match_id=m.id WHERE s.user_id=? ORDER BY s.saved_at DESC",(uid,)).fetchall()
   rows=c.execute("""SELECT r.* FROM results r JOIN user_saved_matches s ON s.match_id=r.match_id WHERE s.user_id=? ORDER BY r.match_id,r.id""",(uid,)).fetchall()
+  selected=c.execute("""SELECT m.id,m.home,m.away,m.league,m.kickoff,m.status,m.home_goals,m.away_goals,
+      r.market,r.prediction,r.actual,r.outcome,sp.market_key,sp.selection_key
+      FROM user_saved_predictions sp JOIN matches m ON m.id=sp.match_id
+      LEFT JOIN results r ON r.match_id=sp.match_id AND
+       ((sp.market_key='match_result' AND r.market='Maç Sonucu') OR
+        (sp.market_key='goals' AND r.market='2,5 Gol') OR
+        (sp.market_key='btts' AND r.market='KG') OR
+        (sp.market_key='htft' AND r.market='İY/MS') OR
+        (sp.market_key='first_half_btts' AND r.market='1. Yarı KG') OR
+        (sp.market_key='second_half_btts' AND r.market='2. Yarı KG'))
+      WHERE sp.user_id=? ORDER BY sp.saved_at DESC""",(uid,)).fetchall()
  results_by_match={}
  for row in rows: results_by_match.setdefault(row["match_id"],[]).append(dict(row))
- return render_template("saved.html",matches=ms,results_by_match=results_by_match)
+ return render_template("saved.html",matches=ms,results_by_match=results_by_match,selected_predictions=selected)
 @app.route("/results")
 def results():
  with db() as c:

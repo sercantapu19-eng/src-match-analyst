@@ -147,3 +147,22 @@ footer a{color:var(--src-blue)}
  .table-wrap table tr[data-match-id] td{font-size:13px}
  .table-wrap table tr[data-match-id] td:nth-child(2){font-size:15px}
 }
+
+/* Saved prediction settlement indicators */
+.prediction-result{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.result-won{display:inline-flex;align-items:center;gap:5px;color:#16834a;font-weight:800}
+.result-won span{display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#e5f6ec;color:#16834a;font-size:15px}
+.result-lost{display:inline-flex;align-items:center;gap:5px;color:#c62828;font-weight:800}
+.result-lost span{display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#fdeaea;color:#c62828;font-size:15px}
+.result-pending{color:#9a6700;font-weight:700}
+
+/* Keep coupon match date and kickoff time clearly separated. */
+.coupon-datetime{display:flex;flex-direction:column;gap:2px;line-height:1.35;color:var(--muted,#667085)}
+.coupon-datetime span{display:block;white-space:nowrap}
+
+/* Inline coupon prediction save state. */
+.coupon-prediction-save{white-space:nowrap;min-width:118px}
+.coupon-prediction-save.saved-prediction{color:#16834a;background:#e5f6ec;border-color:#b8e4c9;font-weight:800}
+.saved-prediction-row{padding:12px 0;border-bottom:1px solid var(--border,#e5e7eb)}
+.saved-prediction-row:last-child{border-bottom:0}
+.saved-prediction-row p{margin:4px 0;color:var(--muted,#667085);font-size:.9rem}

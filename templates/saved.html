@@ -1,6 +1,24 @@
 {% extends "base.html" %}{% block content %}
 <nav class="detail-actions"><a class="button secondary" href="/">← Bültene dön</a></nav>
 <section class="hero saved-hero"><div><div class="eyebrow">SRC MATCH ANALYST · KİŞİSEL LİSTEN</div><h1>Kaydedilen maçlar</h1><p>Yalnızca bu hesapta kaydettiğin maçlar görünür.</p></div><div class="stats"><div><b>{{matches|length}}</b><small>Kayıtlı maç</small></div></div></section>
+{% if selected_predictions %}
+<section class="panel saved-match">
+ <h2>Kaydettiğim tahminler</h2>
+ <p class="muted">Yalnızca seçtiğin pazar tahminleri burada listelenir.</p>
+ {% for p in selected_predictions %}
+ <div class="saved-prediction-row">
+  <strong>{{p.home}} – {{p.away}}</strong>
+  <p>{{p.league}} · {{p.kickoff[:10] if p.kickoff else "—"}} {{p.kickoff[11:16] if p.kickoff and p.kickoff|length >= 16 else ""}}</p>
+  <p>{{p.market_key}} · {{p.selection_key}}</p>
+  {% if p.outcome=="won" %}<span class="result-won">✓ Kazandı</span>
+  {% elif p.outcome=="lost" %}<span class="result-lost">✕ Kaybetti</span>
+  {% elif p.status=="finished" %}<span class="result-pending">Sonuç değerlendirilemedi</span>
+  {% else %}<span class="result-pending">⏳ Bekliyor</span>{% endif %}
+  <a href="/match/{{p.id}}">Maç analizi →</a>
+ </div>
+ {% endfor %}
+</section>
+{% endif %}
 {% for m in matches %}
 <section class="panel saved-match">
  <h2>{{m.home}} – {{m.away}}</h2>
@@ -12,11 +30,25 @@
  <p>{{m.htft or "İY/MS tahmini yok"}} · {{m.over25 or "2,5 gol tahmini yok"}} · KG {{m.btts or "—"}} · Korner {{m.corners or "—"}}</p>
  {% set match_results = results_by_match.get(m.id, []) %}
  {% if match_results %}<div class="result-list"><strong>Tahmin sonuçları</strong>
- {% for r in match_results %}<p>{{r.market}}: {{r.prediction}} → {{r.actual or "Sonuç bekleniyor"}} · {% if r.outcome=="won" %}<strong>Kazandı</strong>{% elif r.outcome=="lost" %}<strong>Kaybetti</strong>{% else %}Bekliyor{% endif %}</p>{% endfor %}
- </div>{% endif %}
+ {% for r in match_results %}
+ <p class="prediction-result">
+  {{r.market}}: {{r.prediction}} → {{r.actual or "Sonuç bekleniyor"}} ·
+  {% if r.outcome=="won" %}<span class="result-won"><span aria-hidden="true">✓</span> Kazandı</span>
+  {% elif r.outcome=="lost" %}<span class="result-lost"><span aria-hidden="true">✕</span> Kaybetti</span>
+  {% else %}<span class="result-pending">⏳ Bekliyor</span>{% endif %}
+ </p>
+ {% endfor %}
+ </div>
+ {% elif m.status=="finished" %}
+ <div class="result-list"><strong>Tahmin değerlendirmesi yapılamadı</strong>
+ <p>{{m.prediction_message or "Bu maç için maç öncesinde kayıtlı bir pazar tahmini bulunmuyor. Sonradan tahmin üretilmediği için kazanma/kaybetme hesabı yapılmadı."}}</p>
+ </div>
+ {% endif %}
  <div class="detail-actions"><a class="button" href="/match/{{m.id}}">Maç analizini aç →</a><form method="post" action="/match/{{m.id}}/unsave"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="button secondary" type="submit">Listemden çıkar</button></form></div>
 </section>
 {% else %}
-<section class="empty"><h2>Henüz kayıtlı maç yok</h2><p>Bültende bir maçı açıp “Seçimlerime kaydet” düğmesine bas. Burada hemen görebilirsin.</p><a class="button" href="/">Maç bültenine git</a></section>
+{% if not selected_predictions %}
+<section class="empty"><h2>Henüz kayıtlı maç veya tahmin yok</h2><p>Kupon Analiz Merkezi'nde kaydettiğin tahminler ve bültende kaydettiğin maçlar burada görünür.</p><a class="button" href="/coupon">Kupon Analiz Merkezi'ne git</a></section>
+{% endif %}
 {% endfor %}
 {% endblock %}

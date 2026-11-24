@@ -56,6 +56,11 @@ def init_auth_db():
                 id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
                 saved_at TEXT NOT NULL, UNIQUE(user_id, match_id))""")
+            _execute(conn, """CREATE TABLE IF NOT EXISTS user_saved_predictions (
+                id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                market_key TEXT NOT NULL, selection_key TEXT NOT NULL, saved_at TEXT NOT NULL,
+                UNIQUE(user_id, match_id, market_key, selection_key))""")
         else:
             _execute(conn, """CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE,
@@ -64,6 +69,11 @@ def init_auth_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
                 saved_at TEXT NOT NULL, UNIQUE(user_id, match_id))""")
+            _execute(conn, """CREATE TABLE IF NOT EXISTS user_saved_predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                market_key TEXT NOT NULL, selection_key TEXT NOT NULL, saved_at TEXT NOT NULL,
+                UNIQUE(user_id, match_id, market_key, selection_key))""")
     _init_rate_limit_table()
 
 
