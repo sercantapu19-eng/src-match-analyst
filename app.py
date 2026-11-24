@@ -6,7 +6,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
 from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required, is_admin_user
-from result_sync import actual_market_values, evaluate_prediction
+from result_sync import actual_market_values, evaluate_prediction, prefer_saved_match
 
 app=Flask(__name__)
 secret_key=os.environ.get("SECRET_KEY","").strip()
@@ -530,7 +530,8 @@ def refresh_results():
    fixtures=provider.fixtures(target_day)
    fetched+=len(fixtures)
    with db() as c:
-    candidates=[dict(row) for row in c.execute("""SELECT * FROM matches
+    candidates=[dict(row) for row in c.execute("""SELECT matches.*, EXISTS(SELECT 1 FROM user_saved_matches s WHERE s.match_id=matches.id) AS is_saved
+      FROM matches
       WHERE substr(kickoff,1,10)=?
       ORDER BY id""",(target_day,)).fetchall()]
     day_results=c.execute("""SELECT r.match_id,r.market,r.prediction,r.actual,r.outcome
@@ -544,7 +545,8 @@ def refresh_results():
     for candidate in candidates:
      pair=(key(candidate["home"]),key(candidate["away"]))
      triple=pair+(key(candidate["league"]),)
-     candidate_by_key[triple]=candidate
+     if triple not in candidate_by_key or candidate.get("is_saved"):
+      candidate_by_key[triple]=candidate
      candidate_by_pair.setdefault(pair,[]).append(candidate)
 
     for fixture in fixtures:
@@ -557,8 +559,7 @@ def refresh_results():
      row=candidate_by_key.get(triple)
      if row is None:
       possible=candidate_by_pair.get(pair,[])
-      if len(possible)==1:
-       row=possible[0]
+      row=prefer_saved_match(possible)
 
      if state=="scheduled":
       if kickoff_day < today.isoformat():
