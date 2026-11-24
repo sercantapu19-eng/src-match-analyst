@@ -386,7 +386,7 @@ def _store_match_events(match_id, events, home, away):
   # Only link a cancelled goal when the provider supplies an explicit related event ID.
   for event in events:
    related=event.get("related_event_uid")
-   if related and event.get("event_status")=="cancelled":
+   if related and event.get("kind")=="goal_cancelled":
     c.execute("""UPDATE match_events SET event_status='cancelled',counts_for_score=FALSE,updated_at=?
      WHERE match_id=? AND event_uid=? AND event_type IN ('goal','own_goal','penalty_scored')""",(now,match_id,related))
 
