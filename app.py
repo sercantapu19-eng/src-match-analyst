@@ -1658,7 +1658,9 @@ def _claim_odds_poll(poll_key, cache_seconds):
  lease=_utc_iso(now_dt+timedelta(seconds=20))
  with db() as conn:
   conn.execute("INSERT OR IGNORE INTO provider_poll_state(poll_key) VALUES(?)",(poll_key,))
-  state=conn.execute("SELECT fetched_at,lease_until FROM provider_poll_state WHERE poll_key=?",(poll_key,)).fetchone()
+  state=conn.execute("SELECT fetched_at,lease_until,last_error FROM provider_poll_state WHERE poll_key=?",(poll_key,)).fetchone()
+  if state and state["last_error"] and _is_cache_fresh(state["fetched_at"],60,now_dt):
+   return False
   if state and _is_cache_fresh(state["fetched_at"],cache_seconds,now_dt):
    return False
   updated=conn.execute("""UPDATE provider_poll_state SET lease_until=?
