@@ -90,7 +90,6 @@ class OddsRouteTests(unittest.TestCase):
         self.assertEqual(payload["fixture_id"], 98765)
         self.assertEqual(len(payload["first_seen"]), 1)
         self.assertEqual(payload["first_seen"][0]["odd"], "2.1")
-        self.assertEqual(payload["live"][0]["odd"], "2.25")
         self.assertEqual(FakeOddsProvider.pre_calls, 1)
         self.assertEqual(FakeOddsProvider.live_calls, 0)
         self.assertEqual(payload["live"], [])
@@ -103,7 +102,7 @@ class OddsRouteTests(unittest.TestCase):
                 "SELECT provider_fixture_id FROM match_odds_fixture_map WHERE match_id=?",
                 (self.match_id,),
             ).fetchone()
-        self.assertEqual(count, 2)
+        self.assertEqual(count, 1)
         self.assertEqual(mapping["provider_fixture_id"], 98765)
         with application.db() as conn:
             usage = conn.execute("SELECT request_count FROM api_football_daily_usage").fetchone()["request_count"]
