@@ -155,3 +155,7 @@ footer a{color:var(--src-blue)}
 .result-lost{display:inline-flex;align-items:center;gap:5px;color:#c62828;font-weight:800}
 .result-lost span{display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#fdeaea;color:#c62828;font-size:15px}
 .result-pending{color:#9a6700;font-weight:700}
+
+/* Keep coupon match date and kickoff time clearly separated. */
+.coupon-datetime{display:flex;flex-direction:column;gap:2px;line-height:1.35;color:var(--muted,#667085)}
+.coupon-datetime span{display:block;white-space:nowrap}
