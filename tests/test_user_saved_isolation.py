@@ -109,6 +109,68 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertIn("＋ Ekle", page)
         self.assertIn(f'href="/login?next=/match/{self.match_one}"', page)
 
+    def test_daily_top_ten_cards_can_be_added_to_saved_matches(self):
+        from unittest.mock import patch
+
+        self._login_as(self.user_one, "one@example.com")
+        day = date.today().isoformat()
+        pick = {
+            "id": self.match_one,
+            "home": "Alpha FC",
+            "away": "Beta FC",
+            "league": "Test League",
+            "kickoff": day + "T18:00:00+03:00",
+            "market": "2,5 Gol",
+            "prediction": "Alt",
+            "confidence": 97,
+        }
+
+        with patch.object(application, "_daily_top_ten", return_value=([pick.copy()], 5)):
+            page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn('class="daily-ten-save-button">＋ Ekle</button>', page)
+        self.assertIn(f'action="/match/{self.match_one}/save"', page)
+
+        response = self.client.post(
+            f"/match/{self.match_one}/save",
+            data={
+                "csrf_token": "isolation-test-token",
+                "next": "bulletin",
+                "day": day,
+                "view": "upcoming",
+            },
+            headers={"X-CSRF-Token": "isolation-test-token"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with patch.object(application, "_daily_top_ten", return_value=([pick.copy()], 5)):
+            saved_page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn('class="daily-ten-saved">✓ Eklendi</span>', saved_page)
+        self.assertNotIn('class="daily-ten-save-button">＋ Ekle</button>', saved_page)
+
+        self._login_as(self.user_two, "two@example.com")
+        with patch.object(application, "_daily_top_ten", return_value=([pick.copy()], 5)):
+            other_account_page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn('class="daily-ten-save-button">＋ Ekle</button>', other_account_page)
+        self.assertNotIn('class="daily-ten-saved">✓ Eklendi</span>', other_account_page)
+
+    def test_guest_daily_top_ten_add_action_redirects_to_login(self):
+        from unittest.mock import patch
+
+        day = date.today().isoformat()
+        pick = {
+            "id": self.match_one,
+            "home": "Alpha FC",
+            "away": "Beta FC",
+            "league": "Test League",
+            "kickoff": day + "T18:00:00+03:00",
+            "market": "2,5 Gol",
+            "prediction": "Alt",
+            "confidence": 97,
+        }
+        with patch.object(application, "_daily_top_ten", return_value=([pick], 5)):
+            page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn('class="daily-ten-save-button" href="/login?next=/match/', page)
+        self.assertIn("＋ Ekle</a>", page)
+
     def test_dashboard_removes_duplicate_metrics_and_daily_ten_is_collapsible(self):
         self._login_as(self.user_one, "one@example.com")
         day = date.today().isoformat()

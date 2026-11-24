@@ -30,6 +30,12 @@
     <a class="daily-ten-fixture" href="/match/{{pick.id}}">{{pick.home|team_display}} – {{pick.away|team_display}}</a>
     <div class="daily-ten-selection">{{pick.prediction}}</div>
     <small>{{pick.kickoff[11:16] if pick.kickoff and pick.kickoff|length>15 else 'Saat belirtilmedi'}} · {{pick.league or "Lig belirtilmedi"}}</small>
+    <div class="daily-ten-save-row">
+     {% if session.get('user_id') %}
+      {% if pick.saved %}<span class="daily-ten-saved">✓ Eklendi</span>
+      {% else %}<form method="post" action="{{url_for('save',mid=pick.id)}}" class="daily-ten-save-form"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><input type="hidden" name="next" value="bulletin"><input type="hidden" name="day" value="{{day}}"><input type="hidden" name="view" value="{{view}}"><button type="submit" class="daily-ten-save-button">＋ Ekle</button></form>{% endif %}
+     {% else %}<a class="daily-ten-save-button" href="{{url_for('auth.login',next=url_for('detail',mid=pick.id))}}">＋ Ekle</a>{% endif %}
+    </div>
    </article>
   {% endfor %}
   </div>
