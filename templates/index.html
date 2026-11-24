@@ -1,33 +1,47 @@
 {% extends "base.html" %}{% block title %}SRC ANALİZ · Maç Merkezi{% endblock %}{% block content %}
 <section class="dashboard-heading"><div><div class="eyebrow">SRC ANALİZ / MAÇ MERKEZİ</div><h1>Futbolun nabzı burada atıyor.</h1><p>Günün fikstürünü, canlı karşılaşmaları ve model performansını tek ekrandan takip et.</p></div><form class="date-picker-form" method="get"><label>Tarih</label><input type="date" name="date" value="{{day}}"><input type="hidden" name="view" value="{{view}}"><button class="button">Tarihi getir</button></form></section>
-<section class="metric-grid"><article class="metric-card metric-blue"><span>▦</span><div><small>Bugünün Maçları</small><strong>{{today_total}}</strong></div></article><article class="metric-card metric-green"><span>◉</span><div><small>Canlı Maç</small><strong>{{live_count}} <em>CANLI</em></strong></div></article><article class="metric-card metric-teal"><span>◎</span><div><small>Başarı Oranı</small><strong>%{{success_rate}}</strong></div></article><article class="metric-card metric-violet"><span>▥</span><div><small>Günün 10'lusu</small><strong>{{daily_pick_count}} / 10 <small>tahmin</small></strong></div></article><article class="metric-card metric-gold"><span>♜</span><div><small>Genel Performans</small><strong>%{{success_rate}}</strong></div></article>
+<section class="metric-grid">
+<details class="metric-card metric-green metric-disclosure">
+ <summary><span>◉</span><div><small>Canlı Maç</small><strong>{{live_count}} <em>CANLI</em></strong><small class="metric-tap-hint">Maçları görmek için dokun</small></div><b class="metric-disclosure-arrow">⌄</b></summary>
+ <div class="metric-expand-list">
+ {% for live in live_matches_summary %}
+  <a href="/match/{{live.id}}" class="metric-live-row">
+   <strong>{{live.home|team_display}} – {{live.away|team_display}}</strong>
+   <small>{{live.elapsed_minute if live.elapsed_minute is not none else "Dakika bekleniyor"}}{% if live.elapsed_minute is not none %}'{% endif %} · {{live.home_goals if live.home_goals is not none else "—"}} – {{live.away_goals if live.away_goals is not none else "—"}} · {{live.league or "Lig bilgisi yok"}}</small>
+  </a>
+ {% else %}<p class="metric-no-live">Şu anda listelenecek canlı maç yok.</p>{% endfor %}
+ </div>
+</details>
+<article class="metric-card metric-teal"><span>◎</span><div><small>Başarı Oranı</small><strong>%{{success_rate}}</strong></div></article>
+<article class="metric-card metric-gold"><span>♜</span><div><small>Genel Performans</small><strong>%{{success_rate}}</strong></div></article>
 </section>
-{% if daily_picks %}
-<section class="panel daily-ten-panel" id="gunun-10lusu">
- <div class="daily-ten-heading">
+<details class="daily-ten-disclosure panel" id="gunun-10lusu">
+ <summary class="daily-ten-heading">
   <div><span class="eyebrow">SRC MODEL ANALİZİ</span><h2>⭐ Günün 10'lusu</h2>
-   <p>Seçilen günün en yüksek model olasılıklı tahminleri. Önce farklı maçlar seçilir; bir maçtan en fazla 2 tahmin alınır.</p></div>
-  <strong>{{daily_pick_count}} / 10</strong>
+   <p>En güçlü günlük tahminleri görüntülemek için dokun</p></div>
+  <strong>{{daily_pick_count}} / 10 <span class="daily-ten-chevron">⌄</span></strong>
+ </summary>
+ {% if daily_picks %}
+ <div class="daily-ten-content">
+  <div class="daily-ten-grid">
+  {% for pick in daily_picks %}
+   <article class="daily-ten-pick">
+    <div class="daily-ten-top"><b>#{{loop.index}} · {{pick.market}}</b><strong>%{{pick.confidence}}</strong></div>
+    <a class="daily-ten-fixture" href="/match/{{pick.id}}">{{pick.home|team_display}} – {{pick.away|team_display}}</a>
+    <div class="daily-ten-selection">{{pick.prediction}}</div>
+    <small>{{pick.kickoff[11:16] if pick.kickoff and pick.kickoff|length>15 else 'Saat belirtilmedi'}} · {{pick.league or "Lig belirtilmedi"}}</small>
+   </article>
+  {% endfor %}
+  </div>
+  <small class="daily-ten-disclaimer">Yüzdeler model olasılığıdır; bahis oranı veya kazanç garantisi değildir. Bir maçtan en fazla 2 tahmin gösterilir.</small>
  </div>
- <div class="daily-ten-grid">
- {% for pick in daily_picks %}
-  <article class="daily-ten-pick">
-   <div class="daily-ten-top"><b>#{{loop.index}} · {{pick.market}}</b><strong>%{{pick.confidence}}</strong></div>
-   <a class="daily-ten-fixture" href="/match/{{pick.id}}">{{pick.home|team_display}} – {{pick.away|team_display}}</a>
-   <div class="daily-ten-selection">{{pick.prediction}}</div>
-   <small>{{pick.kickoff[11:16] if pick.kickoff and pick.kickoff|length>15 else 'Saat belirtilmedi'}} · {{pick.league or "Lig belirtilmedi"}}</small>
-  </article>
- {% endfor %}
+ {% else %}
+ <div class="daily-ten-content daily-ten-empty-content">
+  <p>Bu gün için henüz en az 5 farklı maçta yeterli veriye sahip tahmin bulunamadı. 5 uygun maç oluştuğunda liste otomatik hazırlanacak.</p>
+  <strong>{{daily_match_count}} / 5 uygun maç</strong>
  </div>
- <small class="daily-ten-disclaimer">Yüzdeler model olasılığıdır; bahis oranı veya kazanç garantisi değildir. Bir maçtan en fazla 2 tahmin gösterilir.</small>
-</section>
-{% else %}
-<section class="panel daily-ten-empty" id="gunun-10lusu">
- <div class="eyebrow">SRC MODEL ANALİZİ</div><h2>⭐ Günün 10'lusu</h2>
- <p>Bu gün için henüz en az 5 farklı maçta yeterli veriye sahip tahmin bulunamadı. 5 uygun maç oluştuğunda liste otomatik hazırlanacak.</p>
- <strong>{{daily_match_count}} / 5 uygun maç</strong>
-</section>
-{% endif %}
+ {% endif %}
+</details>
 {% if is_admin %}
 <section class="panel sync-panel"><div><h2>Fikstür senkronizasyonu</h2><p class="status-ok">SportScore veri bağlantısı hazır. Ücretsiz genel erişim desteklenir.</p>{% if last_sync %}<small>Son işlem: {{last_sync.ran_at}} · {{last_sync.status}} · {{last_sync.message}}</small>{% else %}<small>Henüz senkronizasyon yapılmadı.</small>{% endif %}</div><form method="post" action="/sync/fixtures" class="sync-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="date" name="date" value="{{day}}"><button class="button">↻ Seçili günün maçlarını getir</button></form></section>
 <section class="panel history-sync">
