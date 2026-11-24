@@ -368,5 +368,46 @@ class FootballProviderTests(unittest.TestCase):
         self.assertIsNone(FootballProvider.find_matching_live_fixture(
             fixtures, "Chattogram City FC", "Brothers Union"))
 
+
+    def test_match_slug_candidates_uses_team_slugs_and_name_fallback(self):
+        provider = FootballProvider()
+        provider.search_team_slug = lambda name: {
+            "Shashemene Ketema": "shashemene-ketema",
+            "Bishoftu Ketema": "bishoftu-ketema"
+        }.get(name)
+        self.assertEqual(
+            provider.match_slug_candidates("Shashemene Ketema", "Bishoftu Ketema"),
+            ["shashemene-ketema-vs-bishoftu-ketema"]
+        )
+
+    def test_match_detail_slug_candidates_fall_back_to_normalized_team_names(self):
+        provider = FootballProvider()
+        provider.search_team_slug = lambda name: None
+        self.assertEqual(
+            provider.match_slug_candidates("Shashemene Ketema", "Bishoftu Ketema"),
+            ["shashemene-ketema-vs-bishoftu-ketema"]
+        )
+
+    def test_match_detail_is_accepted_only_for_exact_home_away_pair(self):
+        matching = {"match": {
+            "home": {"name": "Shashemene Ketema"},
+            "away": {"name": "Bishoftu Ketema"},
+            "timeline": [{"minute": 12, "type": "goal"}]
+        }}
+        reversed_pair = {"match": {
+            "home": {"name": "Bishoftu Ketema"},
+            "away": {"name": "Shashemene Ketema"}
+        }}
+        unrelated = {"match": {
+            "home": {"name": "Shashemene City"},
+            "away": {"name": "Bishoftu Ketema"}
+        }}
+        self.assertTrue(FootballProvider.match_detail_matches_teams(
+            matching, "Shashemene Ketema", "Bishoftu Ketema"))
+        self.assertFalse(FootballProvider.match_detail_matches_teams(
+            reversed_pair, "Shashemene Ketema", "Bishoftu Ketema"))
+        self.assertFalse(FootballProvider.match_detail_matches_teams(
+            unrelated, "Shashemene Ketema", "Bishoftu Ketema"))
+
 if __name__ == "__main__":
     unittest.main()
