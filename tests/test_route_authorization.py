@@ -21,6 +21,11 @@ class RouteAuthorizationTests(unittest.TestCase):
             os.environ["ADMIN_USER_IDS"] = self.previous_admin_ids
         os.environ.pop("ADMIN_EMAILS", None)
 
+    def test_static_assets_receive_browser_cache_headers(self):
+        response = self.client.get("/static/style.css")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("max-age=86400", response.headers.get("Cache-Control", ""))
+
     def test_admin_authority_uses_user_id_not_email(self):
         with self.client.session_transaction() as session:
             session["user_id"] = 51
