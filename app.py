@@ -1598,14 +1598,26 @@ def match_live_data(mid):
      live_candidates=[dict(item,status="live") for item in team_fixtures if isinstance(item,dict)]
      resolved=provider.find_matching_live_fixture(
       live_candidates,match.get("home"),match.get("away"),match.get("kickoff"))
-     if resolved and (resolved.get("slug") or resolved.get("id")):
+     if resolved:
       combined=dict(resolved)
       for key,value in fixture.items():
        if value not in (None,""):
         combined[key]=value
+      if not (combined.get("slug") or combined.get("id")):
+       # SportScore's team schedule can identify the exact fixture but omit its
+       # match identifier. Its documented detail endpoint accepts a
+       # home-vs-away slug, so derive that candidate only after exact team and
+       # kickoff matching against the team's schedule.
+       derived_slug=provider.match_slug_from_teams(match.get("home"),match.get("away"))
+       if derived_slug:
+        combined["slug"]=derived_slug
+        combined["id"]=derived_slug
+        app.logger.info("SportScore match slug derived from verified team schedule: match_id=%s slug=%s",
+         mid,derived_slug)
+      else:
+       app.logger.info("SportScore match slug resolved from team schedule: match_id=%s slug=%s",
+        mid,combined.get("slug") or combined.get("id"))
       fixture=combined
-      app.logger.info("SportScore match slug resolved from team schedule: match_id=%s slug=%s",
-       mid,fixture.get("slug") or fixture.get("id"))
       break
   except ProviderError as exc:
    app.logger.warning("SportScore live-list unavailable for match %s: %s",mid,exc)
