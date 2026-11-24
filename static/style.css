@@ -159,3 +159,10 @@ footer a{color:var(--src-blue)}
 /* Keep coupon match date and kickoff time clearly separated. */
 .coupon-datetime{display:flex;flex-direction:column;gap:2px;line-height:1.35;color:var(--muted,#667085)}
 .coupon-datetime span{display:block;white-space:nowrap}
+
+/* Inline coupon prediction save state. */
+.coupon-prediction-save{white-space:nowrap;min-width:118px}
+.coupon-prediction-save.saved-prediction{color:#16834a;background:#e5f6ec;border-color:#b8e4c9;font-weight:800}
+.saved-prediction-row{padding:12px 0;border-bottom:1px solid var(--border,#e5e7eb)}
+.saved-prediction-row:last-child{border-bottom:0}
+.saved-prediction-row p{margin:4px 0;color:var(--muted,#667085);font-size:.9rem}
