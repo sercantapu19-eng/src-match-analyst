@@ -26,7 +26,7 @@
                 <tbody>
                   {% for item in r.markets %}
                   <tr>
-                    <td>{{item.market}}</td><td>{{item.prediction}}</td><td>{{item.actual or "—"}}</td>
+                    <td>{{item.market}}</td><td>{{item.prediction_display}}</td><td>{{item.actual_display}}</td>
                     <td><span class="result-outcome {{item.outcome}}">{{"Kazandı" if item.outcome=="won" else "Kaybetti" if item.outcome=="lost" else "Bekliyor"}}</span></td>
                   </tr>
                   {% endfor %}
