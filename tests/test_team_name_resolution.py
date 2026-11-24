@@ -64,6 +64,51 @@ class TeamNameResolutionTests(unittest.TestCase):
         self.assertEqual(len(fake.queries), 2)
         self.assertTrue(all(query[2] == 3 for query in fake.queries))
 
+    def test_daily_fixtures_method_also_resolves_opaque_team_ids(self):
+        class FixturesResponse:
+            ok = True
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {
+                    "fixtures": [{
+                        "id": "daily-fixture",
+                        "home": {"id": "daily-home-opaque-1234", "name": "Team daily-home-opaque-1234"},
+                        "away": {"id": "daily-away-opaque-1234", "name": "Team daily-away-opaque-1234"},
+                        "competition": {"name": "Iraq Premier Division"},
+                        "date": "2026-11-24T11:00:00Z",
+                        "status": "Not Started",
+                    }]
+                }
+
+        class SearchResponse:
+            ok = True
+            status_code = 200
+
+            def json(self):
+                return {
+                    "teams": [
+                        {"id": "daily-home-opaque-1234", "slug": "al-sufiya", "name": "Al-Sufiya SC"},
+                        {"id": "daily-away-opaque-1234", "slug": "al-alam", "name": "Al Alam SC"},
+                    ]
+                }
+
+        class FakeSession:
+            def get(self, url, params, timeout):
+                if url.endswith("/api/v1/fixtures/"):
+                    return FixturesResponse()
+                return SearchResponse()
+
+        provider = FootballProvider()
+        provider.session = FakeSession()
+        rows = provider.fixtures("2026-11-24")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["home"], "Al-Sufiya SC")
+        self.assertEqual(rows[0]["away"], "Al Alam SC")
+        self.assertFalse(rows[0]["home_name_placeholder"])
+        self.assertFalse(rows[0]["away_name_placeholder"])
+
     def test_fixture_parser_does_not_guess_when_search_result_has_different_id(self):
         class FakeResponse:
             ok = True
