@@ -1501,6 +1501,16 @@ def match_live_data(mid):
   with db() as c:
    state_row=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(mid,)).fetchone()
    state=dict(state_row) if state_row else state
+  if minute in (None,""):
+   minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
+  if home_score is None:
+   home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
+  if away_score is None:
+   away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
+  if ht_home is None:
+   ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
+  if ht_away is None:
+   ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
  else:
   provider_slug=str(state.get("provider_slug") or "")
   period="finished" if match.get("status")=="finished" else _live_period(state.get("status") or match.get("status_short"))
