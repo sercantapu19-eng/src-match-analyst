@@ -146,6 +146,45 @@ class SavedMatchIsolationTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(count, 1)
 
+    def test_results_page_groups_markets_under_one_match_and_shows_half_full_time_scores(self):
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET status='finished',ht_home=1,ht_away=0,home_goals=2,away_goals=1 WHERE id=?",
+                (self.match_one,),
+            )
+            conn.executemany(
+                "INSERT INTO results(match_id,market,prediction,actual,outcome) VALUES(?,?,?,?,?)",
+                [
+                    (self.match_one,"2,5 Gol","Üst 2,5","Üst 2,5","won"),
+                    (self.match_one,"KG","Var","Var","won"),
+                    (self.match_one,"Maç Sonucu","MS 1","MS 1","won"),
+                ],
+            )
+        page = self.client.get("/results").get_data(as_text=True)
+        self.assertEqual(page.count("Alpha FC – Beta FC"), 1)
+        self.assertIn("<th>İY</th>", page)
+        self.assertIn("<th>MS</th>", page)
+        self.assertIn("1 – 0", page)
+        self.assertIn("2 – 1", page)
+        self.assertIn("3 bahis", page)
+        self.assertIn("<th>Bahis türü</th>", page)
+        self.assertIn("Gerçekleşen", page)
+
+    def test_results_page_shows_date_before_match_name(self):
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET status='finished',home_goals=1,away_goals=0 WHERE id=?",
+                (self.match_one,),
+            )
+            conn.execute(
+                "INSERT INTO results(match_id,market,prediction,actual,outcome) VALUES(?,?,?,?,?)",
+                (self.match_one,"Maç Sonucu","MS 1","MS 1","won"),
+            )
+        page = self.client.get("/results").get_data(as_text=True)
+        self.assertIn("<th>Tarih</th>", page)
+        self.assertIn("Alpha FC – Beta FC", page)
+        self.assertIn(date.today().strftime("%d.%m.%Y"), page)
+
     def test_regular_user_does_not_see_admin_match_controls(self):
         self._login_as(self.user_one, "one@example.com")
         response = self.client.get(f"/match/{self.match_one}")

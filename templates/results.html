@@ -1,1 +1,67 @@
-{% extends "base.html" %}{% block content %}<h1>Sonuçlar & Performans</h1><div class="stats"><div><b>{{won}}</b><small>Kazandı</small></div><div><b>{{lost}}</b><small>Kaybetti</small></div><div><b>%{{pct}}</b><small>Başarı oranı</small></div></div>{% if rows %}<table><tr><th>Maç</th><th>Pazar</th><th>Tahmin</th><th>Gerçekleşen</th><th>Sonuç</th></tr>{% for r in rows %}<tr><td>{{r.home}} – {{r.away}}</td><td>{{r.market}}</td><td>{{r.prediction}}</td><td>{{r.actual}}</td><td>{{"Kazandı" if r.outcome=="won" else "Kaybetti" if r.outcome=="lost" else "Bekliyor"}}</td></tr>{% endfor %}</table>{% else %}<p>Henüz değerlendirilmiş tahmin yok.</p>{% endif %}{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<h1>Sonuçlar & Performans</h1>
+<div class="stats">
+  <div><b>{{won}}</b><small>Kazandı</small></div>
+  <div><b>{{lost}}</b><small>Kaybetti</small></div>
+  <div><b>%{{pct}}</b><small>Başarı oranı</small></div>
+</div>
+{% if rows %}
+<div class="results-table-wrap">
+  <table class="results-table">
+    <thead><tr><th>Tarih</th><th>Maç</th><th>İY</th><th>MS</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="result-match-row">
+        <td class="result-date">{{r.date}}</td>
+        <td class="result-match-cell">
+          <details class="result-match">
+            <summary>
+              <span class="result-match-name">{{r.home}} – {{r.away}}</span>
+              <span class="result-market-count">{{r.markets|length}} bahis</span>
+            </summary>
+            <div class="result-market-panel">
+              <table class="result-market-table">
+                <thead><tr><th>Bahis türü</th><th>Tahmin</th><th>Gerçekleşen</th><th>Sonuç</th></tr></thead>
+                <tbody>
+                  {% for item in r.markets %}
+                  <tr>
+                    <td>{{item.market}}</td><td>{{item.prediction}}</td><td>{{item.actual or "—"}}</td>
+                    <td><span class="result-outcome {{item.outcome}}">{{"Kazandı" if item.outcome=="won" else "Kaybetti" if item.outcome=="lost" else "Bekliyor"}}</span></td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </td>
+        <td class="result-score">{{r.ht_score}}</td>
+        <td class="result-score">{{r.ft_score}}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<style>
+.results-table-wrap{width:100%;overflow-x:auto}
+.results-table{width:100%;border-collapse:collapse}
+.results-table th,.results-table td{padding:11px 9px;border-bottom:1px solid var(--border,#e5e7eb);text-align:left;vertical-align:top}
+.results-table th{font-size:13px;color:var(--muted,#687386);white-space:nowrap}
+.result-match summary{display:flex;align-items:center;gap:9px;cursor:pointer;list-style:none;min-width:240px}
+.result-match summary::-webkit-details-marker{display:none}
+.result-match summary:before{content:"›";font-size:20px;line-height:16px;color:var(--muted,#687386);transition:transform .15s}
+.result-match[open] summary:before{transform:rotate(90deg)}
+.result-match-name{font-weight:600}
+.result-market-count{font-size:11px;color:var(--muted,#687386);white-space:nowrap}
+.result-market-panel{padding:10px 0 2px 18px}
+.result-market-table{width:100%;border-collapse:collapse;font-size:13px}
+.result-market-table th,.result-market-table td{padding:8px 7px;border-bottom:1px solid var(--border,#e5e7eb);white-space:normal}
+.result-market-table th{font-size:11px}
+.result-score{font-weight:600;white-space:nowrap}\n.result-date{white-space:nowrap;color:var(--muted,#687386);font-size:13px}
+.result-outcome{font-weight:600;white-space:nowrap}
+@media(max-width:640px){.results-table th,.results-table td{padding:9px 6px}.result-match summary{min-width:190px;flex-wrap:wrap}.result-market-panel{padding-left:0}.result-market-table{font-size:12px}.result-market-table th,.result-market-table td{padding:7px 4px}}
+</style>
+{% else %}
+<p>Henüz değerlendirilmiş tahmin yok.</p>
+{% endif %}
+{% endblock %}
