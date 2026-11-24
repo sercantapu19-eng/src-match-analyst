@@ -941,9 +941,7 @@ class FootballProvider:
             actual_tokens = set(FootballProvider._normalize_search_name(
                 FootballProvider.team_name(actual, "") if isinstance(actual, dict) else actual
             ).split())
-            return bool(actual_tokens and (
-                actual_tokens == target or actual_tokens.issubset(target) or target.issubset(actual_tokens)
-            ))
+            return bool(actual_tokens and actual_tokens == target)
 
         def walk(value, depth=0):
             if depth > 8:
