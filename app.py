@@ -531,12 +531,15 @@ def refresh_results():
    fetched+=len(fixtures)
    with db() as c:
     candidates=c.execute("""SELECT * FROM matches
-      WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live')
+      WHERE substr(kickoff,1,10)=?
       ORDER BY id""",(target_day,)).fetchall()
-    candidate_by_pair={
-     (key(row["home"]),key(row["away"])):row
-     for row in candidates
-    }
+    candidate_by_key={}
+    candidate_by_pair={}
+    for candidate in candidates:
+     pair=(key(candidate["home"]),key(candidate["away"]))
+     triple=pair+(key(candidate["league"]),)
+     candidate_by_key[triple]=candidate
+     candidate_by_pair.setdefault(pair,[]).append(candidate)
 
     for fixture in fixtures:
      state=fixture.get("status")
@@ -544,20 +547,30 @@ def refresh_results():
      if not kickoff_day or kickoff_day!=target_day:
       continue
      pair=(key(fixture.get("home")),key(fixture.get("away")))
-     row=candidate_by_pair.get(pair)
+     triple=pair+(key(fixture.get("league")),)
+     row=candidate_by_key.get(triple)
+     if row is None:
+      possible=candidate_by_pair.get(pair,[])
+      if len(possible)==1:
+       row=possible[0]
 
      if state=="scheduled":
       if kickoff_day < today.isoformat():
        continue
       if row:
-       mid=row["id"]
-      else:
-       mid=upsert_fixture_record(c,fixture)
-       row=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone() if mid else None
-       if row:
-        candidate_by_pair[pair]=row
-        upcoming_added+=1
-      if row and row["status"]=="scheduled":
+       if row["status"]=="scheduled":
+        upcoming_ready+=1
+       continue
+      mid=upsert_fixture_record(c,fixture)
+      if mid:
+       row={
+        "id":mid,"home":fixture.get("home",""),"away":fixture.get("away",""),
+        "league":fixture.get("league",""),"status":"scheduled",
+        **{market:"" for market,_label in MARKETS}
+       }
+       candidate_by_key[triple]=row
+       candidate_by_pair.setdefault(pair,[]).append(row)
+       upcoming_added+=1
        upcoming_ready+=1
       continue
 
@@ -566,13 +579,19 @@ def refresh_results():
      if state=="finished" and (fixture.get("home_goals") is None or fixture.get("away_goals") is None):
       continue
 
-     if not row:
+     if row is None:
       # Import provider-confirmed live/finished fixtures absent from local DB.
       mid=upsert_fixture_record(c,fixture)
-      row=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone() if mid else None
-      if not row:
+      if not mid:
        continue
-      candidate_by_pair[pair]=row
+      row={
+       "id":mid,"home":fixture.get("home",""),"away":fixture.get("away",""),
+       "league":fixture.get("league",""),"status":state,
+       **{market:"" for market,_label in MARKETS}
+      }
+      candidate_by_key[triple]=row
+      candidate_by_pair.setdefault(pair,[]).append(row)
+
      mid=row["id"]
      c.execute("""UPDATE matches SET status=?,status_short=?,
        home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals),
@@ -582,14 +601,20 @@ def refresh_results():
        (state,fixture.get("status_short") or ("FT" if state=="finished" else "LIVE"),
         fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),fixture.get("ht_away"),
         state,fixture.get("elapsed_minute"),mid))
+     row["status"]=state
      matched+=1
      if state!="finished":
       continue
 
      finished+=1
-     sync_prediction_rows(c,mid)
-     current=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
-     actuals=actual_market_values(dict(current))
+     # Reuse the already-loaded match row. Only sync prediction rows where
+     # the match actually has saved predictions; most imported historic rows do not.
+     for market,label in MARKETS:
+      prediction=row.get(market)
+      if prediction:
+       c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction",
+        (mid,label,prediction))
+     actuals=actual_market_values(fixture)
      actual_by_label={
       label:actuals[market]
       for market,label in MARKETS
