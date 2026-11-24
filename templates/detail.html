@@ -108,6 +108,25 @@
 })();
 </script>
 
+<section class="panel"><h2>Kupona bahis ekle</h2><p class="muted">İstediğin bahis seçimini taslak kuponuna ekleyebilirsin.</p>
+<div class="coupon-pick-buttons">
+{% if market_probabilities.get('match_result') %}{% for key,label in [('1','MS 1'),('X','MS X'),('2','MS 2')] %}{% if market_probabilities.match_result.get(key) is not none %}<button type="button" class="button secondary add-to-coupon" data-market="match_result" data-selection="{{key}}">{{label}}</button>{% endif %}{% endfor %}{% endif %}
+{% if market_probabilities.get('goals',{}).get('2.5') %}{% for key,label in [('over','2,5 Üst'),('under','2,5 Alt')] %}{% if market_probabilities.goals['2.5'].get(key) is not none %}<button type="button" class="button secondary add-to-coupon" data-market="goals" data-selection="{{key}}">{{label}}</button>{% endif %}{% endfor %}{% endif %}
+{% if market_probabilities.get('btts') %}{% for key in ['Var','Yok'] %}{% if market_probabilities.btts.get(key) is not none %}<button type="button" class="button secondary add-to-coupon" data-market="btts" data-selection="{{key}}">KG {{key}}</button>{% endif %}{% endfor %}{% endif %}
+{% for market,label in [('htft','İY/MS'),('first_half_btts','İY KG'),('second_half_btts','2. Yarı KG')] %}{% for key,value in (market_probabilities.get(market) or {}).items() %}<button type="button" class="button secondary add-to-coupon" data-market="{{market}}" data-selection="{{key}}">{{label}} {{key}}</button>{% endfor %}{% endfor %}
+</div><p id="couponAddStatus" class="muted" aria-live="polite"></p><a id="couponDraftLink" class="button" href="/coupon/draft" hidden>Taslak kuponu görüntüle</a></section>
+<style>.coupon-pick-buttons{display:flex;flex-wrap:wrap;gap:8px}.coupon-pick-buttons .button{font-size:.85rem;padding:9px 12px}</style>
+<script>
+(()=>{const token=document.querySelector('meta[name="csrf-token"]')?.content||"",status=document.getElementById("couponAddStatus"),link=document.getElementById("couponDraftLink");
+document.querySelectorAll(".add-to-coupon").forEach(button=>button.addEventListener("click",async()=>{
+ if(button.disabled)return;button.disabled=true;status.textContent="Kupona ekleniyor…";
+ const body=new URLSearchParams({csrf_token:token,match_id:"{{m.id}}",market_key:button.dataset.market,selection_key:button.dataset.selection});
+ try{const response=await fetch("/coupon/draft/add",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded","X-CSRF-Token":token},body:body.toString()});
+ const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||"Seçim eklenemedi.");
+ button.textContent="✓ Eklendi · "+button.textContent;button.classList.remove("secondary");status.textContent="Bahis seçimi taslak kupona eklendi.";link.hidden=false;
+ }catch(error){status.textContent=error.message;button.disabled=false;}
+}));})();
+</script>
 {% if m.saved %}<form method="post" action="/match/{{m.id}}/unsave"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button secondary">★ Kaydedildi</button></form>{% else %}<form method="post" action="/match/{{m.id}}/save"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">☆ Seçimlerime kaydet</button></form>{% endif %}
 <section class="panel"><h2>Tahminlerimiz · Tüm pazarlar</h2>
 {% if market_probabilities and market_probabilities.get('match_result') %}
