@@ -538,8 +538,9 @@ def refresh_results():
     if mid:
      current=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
      if current and current["status"]=="scheduled":
-      if not any(current[k] for k in ("match_result","htft","over25","btts","first_half_btts","second_half_btts")):
-       generate_prediction(c,mid)
+      # Keep this scheduled score/fixture sync bounded. Prediction generation
+      # scans the full historical corpus and can exceed the web worker timeout.
+      # Newly imported fixtures remain visible; prediction batches run separately.
       upcoming_ready+=1
 
    for fixture in fixtures:
