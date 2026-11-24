@@ -414,9 +414,8 @@ def _finish_match_event_refresh(match_id, *, provider_slug="", status="", minute
    provider_slug=COALESCE(NULLIF(?,''),provider_slug),status=COALESCE(NULLIF(?,''),status),
    minute=COALESCE(?,minute),home_score=COALESCE(?,home_score),away_score=COALESCE(?,away_score),
    ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away),
-   last_success_at=CASE WHEN ?='' THEN ? ELSE last_success_at END,
-   last_error=?,lease_until=NULL WHERE match_id=?""",
-   (provider_slug or "",status or "",minute,home_score,away_score,ht_home,ht_away,error,now,error[:500],match_id))
+   last_success_at=?,last_error=?,lease_until=NULL WHERE match_id=?""",
+   (provider_slug or "",status or "",minute,home_score,away_score,ht_home,ht_away,now,error[:500],match_id))
 
 
 def _live_period(status_short):
@@ -1461,61 +1460,98 @@ def detail(mid):
 
 @app.get("/match/<int:mid>/live-data")
 def match_live_data(mid):
- # Read-only: live feed lookup and match detail requests do not write to the database.
+ """Serve persisted match events and refresh SportScore at most once per cache window."""
  with db() as c:
-  row=c.execute("SELECT id,home,away,kickoff,status,status_short,elapsed_minute,home_goals,away_goals,ht_home,ht_away FROM matches WHERE id=?",(mid,)).fetchone()
- if not row: return jsonify({"error":"Maç bulunamadı."}),404
+  row=c.execute("""SELECT id,home,away,kickoff,status,status_short,elapsed_minute,
+   home_goals,away_goals,ht_home,ht_away FROM matches WHERE id=?""",(mid,)).fetchone()
+  state_row=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(mid,)).fetchone()
+  saved_events=_load_match_event_rows(c,mid)
+ if not row:
+  return jsonify({"error":"Maç bulunamadı."}),404
  match=dict(row)
- if match["status"]!="live":
-  return jsonify({"status":match["status"],"events":[],"minute":match["elapsed_minute"]})
- try:
-  provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-  # Resolve the provider's actual fixture slug from its current live feed.
-  # The database external_id is an import identifier, not assumed to be a slug.
-  live_fixtures=provider.live_matches()
-  fixture=provider.find_matching_live_fixture(live_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
-  # Fallback to the date-scoped fixtures endpoint if the live widget omits this match.
-  if not fixture and match.get("kickoff"):
-   try:
-    match_day=datetime.fromisoformat(str(match["kickoff"]).replace("Z","+00:00")).date().isoformat()
-    daily_fixtures=provider.fixtures(match_day,status="live")
-    fixture=provider.find_matching_live_fixture(daily_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
-    app.logger.info("Live detail fallback match=%s widget_count=%s daily_count=%s matched=%s",
-     mid,len(live_fixtures),len(daily_fixtures),bool(fixture))
-   except (ValueError,TypeError) as date_error:
-    app.logger.warning("Live detail invalid kickoff match=%s: %s",mid,date_error)
-  if not fixture:
-   app.logger.warning("Live detail fixture not matched: match_id=%s home=%r away=%r kickoff=%r widget_count=%s",
-    mid,match.get("home"),match.get("away"),match.get("kickoff"),len(live_fixtures))
-   return jsonify({"status":"live","minute":match.get("elapsed_minute"),
-    "minute_label":"Canlı dakika bekleniyor","score":(
-     f"{match['home_goals']} – {match['away_goals']}" if match["home_goals"] is not None else None),
-    "ht_score":None,"events":[],"events_available":False,
-    "message":"Canlı veri sağlayıcısında bu maç henüz eşleştirilemedi."})
-  provider_slug=fixture.get("slug") or fixture.get("id")
-  payload=provider.match_detail(provider_slug)
-  events=provider.parse_match_events(payload)
+ if match["status"] not in ("live","finished"):
+  return jsonify({"status":match["status"],"events":saved_events,"minute":match["elapsed_minute"],
+   "events_available":bool(saved_events)})
+ provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
+ fixture=None
+ state=dict(state_row) if state_row else {}
+ if match["status"]=="live":
+  try:
+   live_fixtures=_cached_sportscore_live_feed(provider)
+   fixture=provider.find_matching_live_fixture(
+    live_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
+  except ProviderError as exc:
+   app.logger.warning("SportScore live-list unavailable for match %s: %s",mid,exc)
+  except Exception:
+   app.logger.exception("SportScore cached live-list failed for match %s",mid)
+ if fixture:
+  provider_slug=str(fixture.get("slug") or fixture.get("id") or "")
+  period=_live_period(fixture.get("status_short") or fixture.get("status"))
   minute=fixture.get("elapsed_minute")
-  code=str(fixture.get("status_short") or "").upper().replace(" ","_")
-  period="halftime" if code in ("HT","INT","BREAK","BT") else "finished" if code in ("FT","AET","PEN","FINISHED") else "second_half" if code in ("2H","2ND_HALF","SECOND_HALF") else "first_half" if code in ("1H","1ST_HALF","FIRST_HALF") else "live"
-  hg,ag=fixture.get("home_goals"),fixture.get("away_goals")
-  hh,ha=fixture.get("ht_home"),fixture.get("ht_away")
-  if hg is None: hg=match.get("home_goals")
-  if ag is None: ag=match.get("away_goals")
-  if hh is None: hh=match.get("ht_home")
-  if ha is None: ha=match.get("ht_away")
-  return jsonify({"status":period,"minute":minute,
-   "minute_label":"Devre Arası" if period=="halftime" else "Maç Tamamlandı" if period=="finished" else
-    (f"{minute}' · {'2. Yarı' if period=='second_half' else '1. Yarı' if period=='first_half' else 'Canlı'}" if minute is not None else
-     ("2. Yarı" if period=="second_half" else "1. Yarı" if period=="first_half" else "Canlı dakika bekleniyor")),
-   "score":f"{hg} – {ag}" if hg is not None and ag is not None else None,
-   "ht_score":f"{hh} – {ha}" if hh is not None and ha is not None else None,
-   "events":events,"events_available":bool(events),
-   "message":None if events else "Sağlayıcı bu karşılaşma için henüz olay listesi döndürmedi."})
- except ProviderError as exc:
-  app.logger.warning("Live detail unavailable for match %s: %s",mid,exc)
-  return jsonify({"status":"unavailable","minute":match.get("elapsed_minute"),"events":[],
-   "events_available":False,"message":"Canlı veri sağlayıcısına şu anda ulaşılamıyor."}),502
+  home_score=fixture.get("home_goals")
+  away_score=fixture.get("away_goals")
+  ht_home=fixture.get("ht_home")
+  ht_away=fixture.get("ht_away")
+  with db() as c:
+   c.execute("INSERT OR IGNORE INTO match_live_state(match_id) VALUES(?)",(mid,))
+   c.execute("""UPDATE match_live_state SET provider_slug=COALESCE(NULLIF(?,''),provider_slug),
+    status=?,minute=COALESCE(?,minute),home_score=COALESCE(?,home_score),
+    away_score=COALESCE(?,away_score),ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away)
+    WHERE match_id=?""",(provider_slug,period,minute,home_score,away_score,ht_home,ht_away,mid))
+  with db() as c:
+   state_row=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(mid,)).fetchone()
+   state=dict(state_row) if state_row else state
+ else:
+  provider_slug=str(state.get("provider_slug") or "")
+  period=_live_period(state.get("status") or match.get("status_short"))
+  minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
+  home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
+  away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
+  ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
+  ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+ if provider_slug:
+  claimed,state=_claim_match_event_refresh(mid,provider_slug)
+  if claimed:
+   try:
+    payload=provider.match_detail(provider_slug)
+    events=provider.parse_match_events(payload)
+    _store_match_events(mid,events,match.get("home"),match.get("away"))
+    _finish_match_event_refresh(mid,provider_slug=provider_slug,status=period,minute=minute,
+     home_score=home_score,away_score=away_score,ht_home=ht_home,ht_away=ht_away)
+   except ProviderError as exc:
+    app.logger.warning("SportScore event detail unavailable for match %s: %s",mid,exc)
+    _finish_match_event_refresh(mid,provider_slug=provider_slug,error=str(exc))
+   except Exception as exc:
+    app.logger.exception("Persisting live events failed for match %s",mid)
+    _finish_match_event_refresh(mid,provider_slug=provider_slug,error=str(exc))
+ with db() as c:
+  state_row=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(mid,)).fetchone()
+  state=dict(state_row) if state_row else state
+  events=_load_match_event_rows(c,mid)
+ if not fixture:
+  period=_live_period(state.get("status") or match.get("status_short") or match.get("status"))
+  minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
+  home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
+  away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
+  ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
+  ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+ score=f"{home_score} – {away_score}" if home_score is not None and away_score is not None else None
+ ht_score=f"{ht_home} – {ht_away}" if ht_home is not None and ht_away is not None else None
+ last_updated=state.get("last_success_at") or ""
+ error=state.get("last_error") or ""
+ if events:
+  message=None
+ elif error:
+  message="Canlı olay verisi geçici olarak alınamadı; son kayıtlı bilgiler korunuyor."
+ elif not provider_slug:
+  message="Canlı veri sağlayıcısında bu karşılaşma henüz eşleştirilemedi."
+ else:
+  message="Sağlayıcı bu karşılaşma için henüz olay listesi döndürmedi."
+ return jsonify({
+  "status":period,"minute":minute,"minute_label":_live_minute_label(period,minute),
+  "score":score,"ht_score":ht_score,"events":events,"events_available":bool(events),
+  "last_updated":last_updated,"message":message
+ })
 
 @app.post("/match/<int:mid>/status")
 @admin_required
