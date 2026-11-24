@@ -327,7 +327,7 @@ def _cached_sportscore_live_feed(provider):
   return fixtures
  except Exception as exc:
   with db() as c:
-   c.execute("UPDATE provider_poll_state SET lease_until=NULL,last_error=? WHERE poll_key=?",(str(exc)[:500],poll_key))
+   c.execute("UPDATE provider_poll_state SET fetched_at=?,lease_until=NULL,last_error=? WHERE poll_key=?",(_utc_iso(),str(exc)[:500],poll_key))
   try:
    parsed=json.loads(cached_payload or "[]")
    if isinstance(parsed,list) and parsed:
@@ -1503,7 +1503,7 @@ def match_live_data(mid):
    state=dict(state_row) if state_row else state
  else:
   provider_slug=str(state.get("provider_slug") or "")
-  period=_live_period(state.get("status") or match.get("status_short"))
+  period="finished" if match.get("status")=="finished" else _live_period(state.get("status") or match.get("status_short"))
   minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
   home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
   away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
@@ -1529,7 +1529,7 @@ def match_live_data(mid):
   state=dict(state_row) if state_row else state
   events=_load_match_event_rows(c,mid)
  if not fixture:
-  period=_live_period(state.get("status") or match.get("status_short") or match.get("status"))
+  period="finished" if match.get("status")=="finished" else _live_period(state.get("status") or match.get("status_short") or match.get("status"))
   minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
   home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
   away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
