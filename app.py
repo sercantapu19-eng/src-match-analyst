@@ -9,6 +9,9 @@ from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_r
 from result_sync import actual_market_values, evaluate_prediction, prefer_saved_match, matching_fixture_rows
 
 app=Flask(__name__)
+# Static assets are fingerprinted in base.html; cache them for a day to avoid
+# downloading the stylesheet again on every tab/page transition.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"]=86400
 secret_key=os.environ.get("SECRET_KEY","").strip()
 if (os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production") and len(secret_key)<32:
  raise RuntimeError("Production SECRET_KEY must be configured with at least 32 characters.")
