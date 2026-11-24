@@ -97,6 +97,55 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertIn("Alpha FC", page)
         self.assertIn("Listemden çıkar", page)
 
+    def test_individual_coupon_prediction_saves_without_redirect_and_is_account_scoped(self):
+        self._login_as(self.user_one, "one@example.com")
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET market_probabilities=? WHERE id=?",
+                ('{"goals":{"2.5":{"over":0.82,"under":0.18}}}', self.match_one),
+            )
+        response = self.client.post(
+            f"/match/{self.match_one}/save-prediction",
+            data={"csrf_token":"isolation-test-token","market_key":"goals","selection_key":"over"},
+            headers={"X-CSRF-Token":"isolation-test-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["saved"])
+        with application.db() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM user_saved_predictions WHERE user_id=? AND match_id=?",
+                (self.user_one, self.match_one),
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
+        page = self.client.get("/saved").get_data(as_text=True)
+        self.assertIn("Kaydettiğim tahminler", page)
+        self.assertIn("over", page)
+
+        self._login_as(self.user_two, "two@example.com")
+        other_page = self.client.get("/saved").get_data(as_text=True)
+        self.assertNotIn("Alpha FC", other_page)
+
+    def test_individual_prediction_save_is_idempotent(self):
+        self._login_as(self.user_one, "one@example.com")
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET market_probabilities=? WHERE id=?",
+                ('{"btts":{"Var":0.75,"Yok":0.25}}', self.match_one),
+            )
+        for _ in range(2):
+            response = self.client.post(
+                f"/match/{self.match_one}/save-prediction",
+                data={"csrf_token":"isolation-test-token","market_key":"btts","selection_key":"Var"},
+                headers={"X-CSRF-Token":"isolation-test-token"},
+            )
+            self.assertEqual(response.status_code, 200)
+        with application.db() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM user_saved_predictions WHERE user_id=? AND match_id=? AND market_key='btts' AND selection_key='Var'",
+                (self.user_one, self.match_one),
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
+
     def test_regular_user_does_not_see_admin_match_controls(self):
         self._login_as(self.user_one, "one@example.com")
         response = self.client.get(f"/match/{self.match_one}")
