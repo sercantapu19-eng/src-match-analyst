@@ -42,6 +42,10 @@ def team_display(value):
   return "Takım adı doğrulanamadı"
  return str(value or "Takım adı belirtilmedi")
 
+@app.template_filter("goal_side")
+def goal_side(value):
+ return _goal_side_label("2,5 Gol", value)
+
 @app.before_request
 def enforce_csrf():
  if request.method not in ("POST","PUT","PATCH","DELETE"):
