@@ -337,6 +337,54 @@ def _cached_sportscore_live_feed(provider):
   raise
 
 
+
+def _cached_sportscore_date_fixtures(provider, day):
+ """Fallback to the date-scoped fixture API when the compact live widget omits a match."""
+ if not day:
+  return []
+ poll_key=f"sportscore_live_fixtures:{day}"
+ now_dt=datetime.now(timezone.utc)
+ now=_utc_iso(now_dt)
+ lease=_utc_iso(now_dt+timedelta(seconds=LIVE_REFRESH_LEASE_SECONDS))
+ cached_payload=""
+ with db() as c:
+  c.execute("INSERT OR IGNORE INTO provider_poll_state(poll_key) VALUES(?)",(poll_key,))
+  state=c.execute("SELECT payload,fetched_at,lease_until FROM provider_poll_state WHERE poll_key=?",(poll_key,)).fetchone()
+  cached_payload=(state["payload"] or "") if state else ""
+  if state and _is_cache_fresh(state["fetched_at"],LIVE_FEED_CACHE_SECONDS,now_dt):
+   try:
+    parsed=json.loads(cached_payload or "[]")
+    return parsed if isinstance(parsed,list) else []
+   except (TypeError,ValueError):
+    cached_payload=""
+  cursor=c.execute("""UPDATE provider_poll_state SET lease_until=?
+   WHERE poll_key=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,poll_key,now))
+  claimed=cursor.rowcount>0
+ if not claimed:
+  try:
+   parsed=json.loads(cached_payload or "[]")
+   return parsed if isinstance(parsed,list) else []
+  except (TypeError,ValueError):
+   return []
+ try:
+  fixtures=provider.fixtures(day,status="live")
+  payload=json.dumps(fixtures,ensure_ascii=False,separators=(",",":"))
+  with db() as c:
+   c.execute("""UPDATE provider_poll_state SET payload=?,fetched_at=?,lease_until=NULL,last_error=''
+    WHERE poll_key=?""",(payload,_utc_iso(),poll_key))
+  return fixtures
+ except Exception as exc:
+  with db() as c:
+   c.execute("UPDATE provider_poll_state SET fetched_at=?,lease_until=NULL,last_error=? WHERE poll_key=?",
+    (_utc_iso(),str(exc)[:500],poll_key))
+  try:
+   parsed=json.loads(cached_payload or "[]")
+   if isinstance(parsed,list) and parsed:
+    return parsed
+  except (TypeError,ValueError):
+   pass
+  raise
+
 def _load_match_event_rows(c, match_id):
  rows=c.execute("""SELECT event_uid,event_type,event_status,related_event_uid,team_side,minute,
   extra_minute,sort_key,primary_player,secondary_player,detail_note,icon,label,counts_for_score,
@@ -1485,6 +1533,15 @@ def match_live_data(mid):
    live_fixtures=_cached_sportscore_live_feed(provider)
    fixture=provider.find_matching_live_fixture(
     live_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
+   if not fixture:
+    kickoff_text=str(match.get("kickoff") or "")
+    match_day=kickoff_text[:10] if len(kickoff_text)>=10 else ""
+    date_fixtures=_cached_sportscore_date_fixtures(provider,match_day)
+    fixture=provider.find_matching_live_fixture(
+     date_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
+    if fixture:
+     app.logger.info("SportScore live fixture matched via date feed: match_id=%s provider_id=%s",
+      mid,fixture.get("id") or fixture.get("slug"))
   except ProviderError as exc:
    app.logger.warning("SportScore live-list unavailable for match %s: %s",mid,exc)
   except Exception:
