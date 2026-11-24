@@ -76,6 +76,36 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertIn("Gamma FC", second_account_page)
         self.assertNotIn("Alpha FC", second_account_page)
 
+    def test_homepage_fixture_card_has_add_action_and_shows_saved_state(self):
+        self._login_as(self.user_one, "one@example.com")
+        day = date.today().isoformat()
+        page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn("＋ Ekle", page)
+        self.assertIn(f'action="/match/{self.match_one}/save"', page)
+
+        response = self.client.post(
+            f"/match/{self.match_one}/save",
+            data={
+                "csrf_token": "isolation-test-token",
+                "next": "bulletin",
+                "day": day,
+                "view": "upcoming",
+            },
+            headers={"X-CSRF-Token": "isolation-test-token"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(f"/?date={day}&view=upcoming", response.headers["Location"])
+
+        saved_page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn("✓ Eklendi", saved_page)
+        self.assertNotIn("＋ Ekle", saved_page)
+
+    def test_guest_sees_add_action_that_leads_to_login(self):
+        day = date.today().isoformat()
+        page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn("＋ Ekle", page)
+        self.assertIn(f"/login?next=%2Fmatch%2F{self.match_one}", page)
+
     def test_save_returns_to_match_and_detail_has_navigation_links(self):
         self._login_as(self.user_one, "one@example.com")
         response = self._save(self.match_one)
