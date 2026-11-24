@@ -30,7 +30,7 @@ def inject_template_security():
 def enforce_csrf():
  if request.method not in ("POST","PUT","PATCH","DELETE"):
   return
- if request.endpoint == "refresh_results":
+ if request.endpoint in ("refresh_results","refresh_missing_predictions"):
   expected_token=os.environ.get("RESULT_SYNC_TOKEN","").strip()
   supplied=request.headers.get("Authorization","")
   if expected_token and hmac.compare_digest(supplied, "Bearer "+expected_token):
@@ -657,6 +657,68 @@ def refresh_results():
  except Exception as exc:
   app.logger.exception("Result sync failed")
   return jsonify({"error":"Sonuç senkronizasyonu başarısız."}),500
+
+
+@app.post("/sync/predictions/refresh")
+def refresh_missing_predictions():
+ """Token-protected small batches of predictions for today's verified fixtures."""
+ token=os.environ.get("RESULT_SYNC_TOKEN","").strip()
+ if not token:
+  return jsonify({"error":"RESULT_SYNC_TOKEN yapılandırılmamış."}),503
+ supplied=request.headers.get("Authorization","")
+ if not hmac.compare_digest(supplied,"Bearer "+token):
+  return jsonify({"error":"Yetkisiz."}),401
+
+ today=datetime.now(ZoneInfo("Europe/Istanbul")).date()
+ requested_day=(request.args.get("date") or today.isoformat()).strip()
+ if requested_day!=today.isoformat():
+  return jsonify({"error":"Bu görev yalnızca bugünün yaklaşan maçlarını işler."}),400
+
+ try:
+  limit=max(1,min(8,int(request.args.get("limit","8"))))
+ except (TypeError,ValueError):
+  limit=8
+
+ now_local=datetime.now(ZoneInfo("Europe/Istanbul"))
+ with db() as c:
+  history=[dict(row) for row in c.execute("""SELECT id,home,away,league,status,
+    home_goals,away_goals,ht_home,ht_away FROM matches
+    WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL
+    ORDER BY kickoff""").fetchall()]
+  candidates=[dict(row) for row in c.execute("""SELECT * FROM matches
+    WHERE substr(kickoff,1,10)=? AND status='scheduled'
+    ORDER BY kickoff,id""",(requested_day,)).fetchall()]
+
+  eligible=[]
+  for match in candidates:
+   try:
+    kickoff=datetime.fromisoformat(str(match.get("kickoff") or "").replace("Z","+00:00"))
+    if kickoff.tzinfo is None:
+     kickoff=kickoff.replace(tzinfo=ZoneInfo("Europe/Istanbul"))
+    else:
+     kickoff=kickoff.astimezone(ZoneInfo("Europe/Istanbul"))
+   except (TypeError,ValueError):
+    continue
+   has_prediction=bool(match.get("market_probabilities") and match["market_probabilities"]!="{}")
+   has_market=any(match.get(key) for key in ("match_result","htft","over25","btts","first_half_btts","second_half_btts"))
+   if kickoff>=now_local and not has_prediction and not has_market:
+    eligible.append(match)
+
+  batch=eligible[:limit]
+  history_index=prepare_history(history)
+  for target in batch:
+   rebuild_one_prediction(c,target,history_index)
+
+  remaining=max(0,len(eligible)-len(batch))
+  generated=sum(
+   1 for target in batch
+   if c.execute("SELECT market_probabilities FROM matches WHERE id=?",(target["id"],)).fetchone()["market_probabilities"] not in ("","{}")
+  )
+ return jsonify({
+  "ok":True,"date":requested_day,"processed":len(batch),
+  "generated":generated,"remaining":remaining,
+  "updated_at":datetime.now(ZoneInfo("Europe/Istanbul")).isoformat()
+ })
 
 
 @app.post("/sync/history/start")
