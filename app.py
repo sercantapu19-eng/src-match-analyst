@@ -258,8 +258,8 @@ def upsert_fixture_record(c, fixture, provider="sportscore"):
  # Never let provider-generated "Team <opaque-id>" labels overwrite a real club name.
  external_id=str(fixture.get("id") or "").strip()
  provider_name=str(fixture.get("provider") or provider)
- home_placeholder=FootballProvider.is_placeholder_team_name(fixture.get("home"))
- away_placeholder=FootballProvider.is_placeholder_team_name(fixture.get("away"))
+ home_placeholder=_is_placeholder_team_name(fixture.get("home"))
+ away_placeholder=_is_placeholder_team_name(fixture.get("away"))
 
  def update_existing(existing):
   home=existing["home"] if home_placeholder else fixture["home"]
@@ -366,7 +366,7 @@ def team_logo():
  team_name=(request.args.get("name") or "").strip()[:100]
  if not team_name:
   return jsonify({"logo":None}),400
- if FootballProvider.is_placeholder_team_name(team_name):
+ if _is_placeholder_team_name(team_name):
   return jsonify({"logo":None})
  cache_key=team_name.casefold()
  cached=_TEAM_LOGO_CACHE.get(cache_key)
