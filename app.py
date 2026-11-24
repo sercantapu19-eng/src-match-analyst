@@ -512,9 +512,36 @@ def refresh_results():
   for target_day in days:
    fixtures.extend(provider.fixtures(target_day))
   fetched=len(fixtures)
+  upcoming_added=0
+  upcoming_ready=0
   def key(value):
    return " ".join(sorted(provider._normalize_search_name(value).split()))
   with db() as c:
+   # Import today's scheduled fixtures too; otherwise an empty bulletin stays
+   # empty because the former job only updated existing live/finished rows.
+   for fixture in fixtures:
+    state=fixture.get("status")
+    kickoff_day=str(fixture.get("kickoff") or "")[:10]
+    if state!="scheduled" or not kickoff_day or kickoff_day < today.isoformat():
+     continue
+    candidates=c.execute("""SELECT * FROM matches
+      WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live')
+      ORDER BY id""",(kickoff_day,)).fetchall()
+    home_key,away_key=key(fixture.get("home")),key(fixture.get("away"))
+    row=next((item for item in candidates
+      if key(item["home"])==home_key and key(item["away"])==away_key),None)
+    if row:
+     mid=row["id"]
+    else:
+     mid=upsert_fixture_record(c,fixture)
+     upcoming_added+=1
+    if mid:
+     current=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
+     if current and current["status"]=="scheduled":
+      if not any(current[k] for k in ("match_result","htft","over25","btts","first_half_btts","second_half_btts")):
+       generate_prediction(c,mid)
+      upcoming_ready+=1
+
    for fixture in fixtures:
     state=fixture.get("status")
     if state not in ("live","finished"):
@@ -563,9 +590,9 @@ def refresh_results():
      evaluated+=1
    c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
     ("sportscore",today.isoformat(),datetime.utcnow().isoformat(),fetched,"success",
-     f"Sonuç senkronizasyonu: {fetched} sağlayıcı maçı, {matched} eşleşme, {finished} biten maç, {evaluated} pazar sonuçlandırıldı."))
-  return jsonify({"ok":True,"days":days,"fetched":fetched,"matched":matched,
-   "finished":finished,"evaluated_markets":evaluated,
+     f"Günlük fikstür ve sonuç senkronizasyonu: {fetched} sağlayıcı maçı, {upcoming_added} yeni bugünkü maç, {upcoming_ready} yaklaşan maç hazırlandı, {matched} canlı/biten eşleşme, {finished} biten maç, {evaluated} pazar sonuçlandırıldı."))
+  return jsonify({"ok":True,"days":days,"fetched":fetched,"upcoming_added":upcoming_added,
+   "upcoming_ready":upcoming_ready,"matched":matched,"finished":finished,"evaluated_markets":evaluated,
    "updated_at":datetime.now(ZoneInfo("Europe/Istanbul")).isoformat()})
  except ProviderError as exc:
   app.logger.warning("Result sync provider error: %s",exc)
