@@ -545,6 +545,7 @@ def refresh_results():
     if state!="finished":
      continue
     finished+=1
+    sync_prediction_rows(c,mid)
     current=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
     actuals=actual_market_values(dict(current))
     for market,actual in actuals.items():
