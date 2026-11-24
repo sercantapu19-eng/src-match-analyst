@@ -42,6 +42,10 @@ def team_display(value):
   return "Takım adı doğrulanamadı"
  return str(value or "Takım adı belirtilmedi")
 
+@app.template_filter("goal_side")
+def goal_side(value):
+ return _goal_side_label("2,5 Gol", value)
+
 @app.before_request
 def enforce_csrf():
  if request.method not in ("POST","PUT","PATCH","DELETE"):
@@ -527,6 +531,10 @@ def index():
   live_featured=c.execute("""SELECT id,home,away,league,kickoff,home_goals,away_goals,
    ht_home,ht_away,elapsed_minute,status_short FROM matches
    WHERE status='live' ORDER BY kickoff DESC,id DESC LIMIT 1""").fetchone()
+  live_matches_summary=c.execute("""SELECT id,home,away,league,kickoff,elapsed_minute,
+   home_goals,away_goals FROM matches
+   WHERE status='live' AND substr(kickoff,1,10)=?
+   ORDER BY kickoff DESC,id DESC LIMIT 30""",(day,)).fetchall()
   upcoming=c.execute("""SELECT COUNT(*) FROM (
    SELECT ROW_NUMBER() OVER (
     PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
@@ -562,7 +570,7 @@ def index():
   unverified_count=unverified,live_count=live_count,today_total=today_total,
   success_rate=success_rate,
   daily_picks=daily_picks,daily_pick_count=len(daily_picks),daily_match_count=daily_match_count,
-  live_featured=live_featured)
+  live_featured=live_featured,live_matches_summary=live_matches_summary)
 
 @app.post("/sync/fixtures")
 @admin_required
@@ -1207,7 +1215,18 @@ def save(mid):
   if c.execute("SELECT 1 FROM matches WHERE id=?",(mid,)).fetchone():
    c.execute("INSERT INTO user_saved_matches(user_id,match_id,saved_at) VALUES(?,?,?) ON CONFLICT(user_id,match_id) DO NOTHING",(uid,mid,datetime.utcnow().isoformat()))
  flash("Maç kaydedildi. Kaydedilen maçlar bölümünden her zaman ulaşabilirsin.","success")
- if request.args.get("next") == "coupon": return redirect(url_for("coupon_center"))
+ next_target=(request.form.get("next") or request.args.get("next") or "").strip()
+ if next_target == "coupon": return redirect(url_for("coupon_center"))
+ if next_target == "bulletin":
+  target_day=(request.form.get("day") or "").strip()
+  try:
+   datetime.strptime(target_day,"%Y-%m-%d")
+  except ValueError:
+   target_day=datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
+  target_view=(request.form.get("view") or "upcoming").strip()
+  if target_view not in ("upcoming","unverified","live","completed"):
+   target_view="upcoming"
+  return redirect(url_for("index",date=target_day,view=target_view))
  return redirect(url_for("detail",mid=mid))
 @app.post("/match/<int:mid>/unsave")
 @login_required

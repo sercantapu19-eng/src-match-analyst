@@ -76,6 +76,103 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertIn("Gamma FC", second_account_page)
         self.assertNotIn("Alpha FC", second_account_page)
 
+    def test_homepage_fixture_card_has_add_action_and_shows_saved_state(self):
+        self._login_as(self.user_one, "one@example.com")
+        day = date.today().isoformat()
+        page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn("＋ Ekle", page)
+        self.assertIn(f'action="/match/{self.match_one}/save"', page)
+
+        response = self.client.post(
+            f"/match/{self.match_one}/save",
+            data={
+                "csrf_token": "isolation-test-token",
+                "next": "bulletin",
+                "day": day,
+                "view": "upcoming",
+            },
+            headers={"X-CSRF-Token": "isolation-test-token"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(f"/?date={day}&view=upcoming", response.headers["Location"])
+
+        saved_page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn("✓ Eklendi", saved_page)
+        saved_row = saved_page.split(f'<tr data-match-id="{self.match_one}">', 1)[1].split("</tr>", 1)[0]
+        other_row = saved_page.split(f'<tr data-match-id="{self.match_two}">', 1)[1].split("</tr>", 1)[0]
+        self.assertNotIn("＋ Ekle", saved_row)
+        self.assertIn("＋ Ekle", other_row)
+
+    def test_guest_sees_add_action_that_leads_to_login(self):
+        day = date.today().isoformat()
+        page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn("＋ Ekle", page)
+        self.assertIn(f'href="/login?next=/match/{self.match_one}"', page)
+
+    def test_dashboard_removes_duplicate_metrics_and_daily_ten_is_collapsible(self):
+        self._login_as(self.user_one, "one@example.com")
+        day = date.today().isoformat()
+        page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        metric_grid = page.split('<section class="metric-grid">', 1)[1].split("</section>", 1)[0]
+        self.assertNotIn("Bugünün Maçları", metric_grid)
+        self.assertNotIn("Günün 10'lusu", metric_grid)
+        self.assertIn('<details class="daily-ten-disclosure panel"', page)
+        self.assertNotIn('id="gunun-10lusu" open', page)
+
+    def test_live_metric_expands_to_show_teams_minute_and_score(self):
+        self._login_as(self.user_one, "one@example.com")
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET status='live',elapsed_minute=67,home_goals=2,away_goals=1,league='Test League' WHERE id=?",
+                (self.match_one,),
+            )
+        day = date.today().isoformat()
+        page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn('<details class="metric-card metric-green metric-disclosure">', page)
+        self.assertIn("Alpha FC – Beta FC", page)
+        self.assertIn("67'", page)
+        self.assertIn("2 – 1", page)
+        self.assertIn("Test League", page)
+
+    def test_detail_featured_goal_prediction_displays_only_alt_or_ust(self):
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET status='finished',over25=?,prediction_confidence=? WHERE id=?",
+                ("Alt 2,5", '{"over25":82}', self.match_one),
+            )
+        page = self.client.get(f"/match/{self.match_one}").get_data(as_text=True)
+        self.assertIn("<td>2,5 Gol</td><td><b>Alt</b></td>", page)
+        self.assertNotIn("<b>Alt 2,5</b>", page)
+
+    def test_results_page_restores_green_win_and_red_loss_indicators(self):
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET status='finished',home_goals=2,away_goals=1 WHERE id=?",
+                (self.match_one,),
+            )
+            conn.executemany(
+                "INSERT INTO results(match_id,market,prediction,actual,outcome) VALUES(?,?,?,?,?)",
+                [
+                    (self.match_one, "Maç Sonucu", "MS 1", "MS 1", "won"),
+                    (self.match_one, "KG", "Var", "Yok", "lost"),
+                ],
+            )
+        page = self.client.get("/results").get_data(as_text=True)
+        self.assertIn('class="result-outcome result-won"', page)
+        self.assertIn("✓", page)
+        self.assertIn('class="result-outcome result-lost"', page)
+        self.assertIn("×", page)
+
+    def test_homepage_has_team_name_search_for_fixture_rows(self):
+        self._login_as(self.user_one, "one@example.com")
+        day = date.today().isoformat()
+        page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
+        self.assertIn('id="fixtureTeamSearch"', page)
+        self.assertIn('placeholder="Takım adı yaz, maçı bul..."', page)
+        self.assertIn("fixtureSearchStatus", page)
+        self.assertIn("row.querySelector('.team-pair')", page)
+        self.assertIn("Bu takım adına göre maç bulunamadı.", page)
+
     def test_save_returns_to_match_and_detail_has_navigation_links(self):
         self._login_as(self.user_one, "one@example.com")
         response = self._save(self.match_one)
