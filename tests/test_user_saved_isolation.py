@@ -287,6 +287,19 @@ class SavedMatchIsolationTests(unittest.TestCase):
         other_page = self.client.get("/saved").get_data(as_text=True)
         self.assertNotIn("Alpha FC", other_page)
 
+    def test_saved_match_summary_translates_btts_and_goal_selections(self):
+        self._login_as(self.user_one, "one@example.com")
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET over25='Over 2.5',btts='yes' WHERE id=?",
+                (self.match_one,),
+            )
+        page = self.client.get("/saved").get_data(as_text=True)
+        self.assertIn("Üst", page)
+        self.assertIn("KG Var", page)
+        self.assertNotIn("yes", page)
+        self.assertNotIn("Over 2.5", page)
+
     def test_saved_prediction_market_names_are_turkish(self):
         self._login_as(self.user_one, "one@example.com")
         with application.db() as conn:
