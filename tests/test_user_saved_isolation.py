@@ -185,6 +185,27 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertIn("Alpha FC – Beta FC", page)
         self.assertIn(date.today().strftime("%d.%m.%Y"), page)
 
+    def test_goal_total_results_hide_repeated_line_from_prediction_and_actual(self):
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET status='finished',home_goals=3,away_goals=2 WHERE id=?",
+                (self.match_one,),
+            )
+            conn.executemany(
+                "INSERT INTO results(match_id,market,prediction,actual,outcome) VALUES(?,?,?,?,?)",
+                [
+                    (self.match_one,"1,5 Gol","Üst 1,5","Üst 1,5","won"),
+                    (self.match_one,"2,5 Gol","Üst 2,5","Üst 2,5","won"),
+                    (self.match_one,"3,5 Gol","Alt 3,5","Üst 3,5","lost"),
+                    (self.match_one,"4,5 Gol","Alt 4,5","Alt 4,5","won"),
+                ],
+            )
+        page = self.client.get("/results").get_data(as_text=True)
+        self.assertIn("<td>1,5 Gol</td><td>Üst</td><td>Üst</td>", page)
+        self.assertIn("<td>2,5 Gol</td><td>Üst</td><td>Üst</td>", page)
+        self.assertIn("<td>3,5 Gol</td><td>Alt</td><td>Üst</td>", page)
+        self.assertIn("<td>4,5 Gol</td><td>Alt</td><td>Alt</td>", page)
+
     def test_regular_user_does_not_see_admin_match_controls(self):
         self._login_as(self.user_one, "one@example.com")
         response = self.client.get(f"/match/{self.match_one}")
