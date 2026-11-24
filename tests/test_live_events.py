@@ -123,6 +123,64 @@ class LiveEventCacheRouteTests(unittest.TestCase):
             ).fetchone()["count"]
         self.assertEqual(stored, 1)
 
+    def test_date_fixture_fallback_matches_live_game_missing_from_widget_feed(self):
+        class FakeProvider:
+            detail_calls = 0
+            _normalize_search_name = staticmethod(FootballProvider._normalize_search_name)
+            find_matching_live_fixture = staticmethod(FootballProvider.find_matching_live_fixture)
+            parse_match_events = staticmethod(FootballProvider.parse_match_events)
+
+            def __init__(self, api_key=None):
+                pass
+
+            def live_matches(self, limit=50):
+                return []
+
+            def fixtures(self, day, status=None):
+                self.assertion_day = day
+                self.assertion_status = status
+                return [{
+                    "id": "sportscore-match-38887",
+                    "slug": "buriram-united-vs-shanghai-port",
+                    "home": "Alpha FC",
+                    "away": "Beta FC",
+                    "status": "live",
+                    "status_short": "2H",
+                    "elapsed_minute": 91,
+                    "home_goals": 3,
+                    "away_goals": 1,
+                    "kickoff": day + "T18:00:00+03:00",
+                }]
+
+            def match_detail(self, slug):
+                type(self).detail_calls += 1
+                self.assertion_slug = slug
+                return {"events": [{
+                    "id": "goal-69", "type": "goal", "minute": 69,
+                    "player": "Prince Ampem", "team": "Alpha FC",
+                }]}
+
+        with patch.object(application, "FootballProvider", FakeProvider):
+            response = self.client.get(f"/match/{self.match_id}/live-data")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["score"], "3 – 1")
+        self.assertEqual(len(payload["events"]), 1)
+        self.assertEqual(payload["events"][0]["primary_player"], "Prince Ampem")
+        self.assertEqual(FakeProvider.detail_calls, 1)
+        with application.db() as conn:
+            state = conn.execute(
+                "SELECT provider_slug FROM match_live_state WHERE match_id=?",
+                (self.match_id,),
+            ).fetchone()
+            stored = conn.execute(
+                "SELECT COUNT(*) AS count FROM match_events WHERE match_id=?",
+                (self.match_id,),
+            ).fetchone()["count"]
+        self.assertEqual(state["provider_slug"], "buriram-united-vs-shanghai-port")
+        self.assertEqual(stored, 1)
+
     def test_duplicate_event_upsert_and_explicit_var_cancellation_preserve_history(self):
         events = FootballProvider.parse_match_events({
             "events": [
