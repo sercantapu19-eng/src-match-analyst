@@ -477,12 +477,26 @@ def _load_match_event_rows(c, match_id):
   extra_minute,sort_key,primary_player,secondary_player,detail_note,icon,label,counts_for_score,
   first_seen_at,last_seen_at FROM match_events WHERE match_id=? ORDER BY sort_key DESC,id DESC""",(match_id,)).fetchall()
  result=[]
+ seen_semantic=set()
  for row in rows:
   item=dict(row)
   item["kind"]=item.pop("event_type")
   item["detail"]=item.pop("detail_note") or ""
   item["minute_label"]=f"{item['minute']}′" if item.get("minute") not in (None,"") else "—"
   item["team"]=item.pop("team_side") or ""
+  # Older fallback IDs may differ for one incident; collapse identical
+  # type/minute/side/player rows without deleting historical DB records.
+  if (item["kind"] in ("goal","own_goal","penalty_scored","yellow_card","red_card","second_yellow","corner")
+      and item["team"] in ("home","away")
+      and (item["kind"] != "corner" or item.get("primary_player") or item.get("secondary_player"))):
+   # Keep same-minute corners when the provider gives no player identity:
+   # they may be distinct real corners, not duplicate polling records.
+   semantic=(item["kind"],str(item.get("minute") or ""),item.get("extra_minute"),item["team"],
+    str(item.get("primary_player") or "").strip().casefold(),
+    str(item.get("secondary_player") or "").strip().casefold())
+   if semantic in seen_semantic:
+    continue
+   seen_semantic.add(semantic)
   result.append(item)
  return result
 

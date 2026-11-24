@@ -903,9 +903,15 @@ class FootballProvider:
                 is_home = FootballProvider.pick(item, "is_home", "isHome", "home")
                 is_away = FootballProvider.pick(item, "is_away", "isAway", "away")
                 team_side = "home" if is_home is True else "away" if is_away is True else ""
+            # Provider feeds may repeat an incident with altered team aliases and no ID.
+            normalized_team = FootballProvider._normalize_search_name(team)
             canonical = {
-                "kind": kind, "minute": minute_text, "team": team, "player": player,
-                "incoming": incoming, "outgoing": outgoing, "detail": detail_text,
+                "kind": kind, "minute": minute_text, "team_side": team_side,
+                "team": normalized_team if not team_side else "",
+                "player": FootballProvider._normalize_search_name(player),
+                "incoming": FootballProvider._normalize_search_name(incoming),
+                "outgoing": FootballProvider._normalize_search_name(outgoing),
+                "detail": detail_text,
             }
             if provider_id not in (None, ""):
                 event_uid = "sportscore:" + str(provider_id).strip()

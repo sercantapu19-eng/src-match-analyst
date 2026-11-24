@@ -53,6 +53,16 @@ class LiveEventParserTests(unittest.TestCase):
         self.assertEqual(goal["team"], "Alpha FC")
         self.assertEqual(goal["team_side"], "home")
 
+    def test_fallback_event_identity_uses_team_side_to_collapse_alias_duplicates(self):
+        payload={"events":[
+            {"type":"goal","minute":34,"team":"Alpha FC","team_side":"home"},
+            {"type":"goal","minute":34,"team":"Alpha Football Club","team_side":"home"},
+            {"type":"goal","minute":34,"team":"Beta FC","team_side":"away"},
+        ]}
+        events=FootballProvider.parse_match_events(payload)
+        self.assertEqual(len(events),2)
+        self.assertEqual({e["team_side"] for e in events},{"home","away"})
+
     def test_fallback_event_identity_is_stable(self):
         payload = {"events": [
             {"type": "goal", "minute": 21, "player": "Scorer", "team": "Alpha"}
@@ -334,6 +344,25 @@ class LiveEventCacheRouteTests(unittest.TestCase):
                 (self.match_id,),
             ).fetchone()
         self.assertEqual(state["provider_slug"], "alpha-fc-vs-beta-fc")
+
+    def test_timeline_loader_collapses_legacy_duplicate_incidents(self):
+        events=[
+            {"event_uid":"fallback:old-a","kind":"goal","minute":"34","team_side":"home","primary_player":"","label":"Gol","icon":"⚽"},
+            {"event_uid":"fallback:old-b","kind":"goal","minute":"34","team_side":"home","primary_player":"","label":"Gol","icon":"⚽"},
+            {"event_uid":"fallback:old-c","kind":"yellow_card","minute":"8","team_side":"away","primary_player":"","label":"Sarı kart","icon":"🟨"},
+            {"event_uid":"fallback:old-d","kind":"yellow_card","minute":"8","team_side":"away","primary_player":"","label":"Sarı kart","icon":"🟨"},
+            {"event_uid":"sportscore:goal-other","kind":"goal","minute":"34","team_side":"away","primary_player":"Away Scorer","label":"Gol","icon":"⚽"},
+            {"event_uid":"sportscore:corner-1","kind":"corner","minute":"55","team_side":"home","primary_player":"","label":"Korner","icon":"🚩"},
+            {"event_uid":"sportscore:corner-2","kind":"corner","minute":"55","team_side":"home","primary_player":"","label":"Korner","icon":"🚩"},
+        ]
+        application._store_match_events(self.match_id,events,"Alpha FC","Beta FC")
+        with application.db() as conn:
+            rows=application._load_match_event_rows(conn,self.match_id)
+        self.assertEqual(len(rows),5)
+        self.assertEqual(sum(x["kind"]=="corner" for x in rows),2)
+        self.assertEqual({(x["kind"],x["minute"],x["team"]) for x in rows if x["kind"]!="corner"},{
+            ("goal","34","home"),("yellow_card","8","away"),("goal","34","away")
+        })
 
     def test_duplicate_event_upsert_and_explicit_var_cancellation_preserve_history(self):
         events = FootballProvider.parse_match_events({
