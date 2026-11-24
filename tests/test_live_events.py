@@ -127,9 +127,9 @@ class LiveEventCacheRouteTests(unittest.TestCase):
         with application.db() as conn:
             conn.execute("UPDATE matches SET status='finished',status_short='FT' WHERE id=?",
                          (self.match_id,))
-            application._store_match_events(self.match_id, FootballProvider.parse_match_events({
-                "events": [{"id": "g-final", "type": "goal", "minute": 90, "player": "Scorer"}]
-            }), "Alpha FC", "Beta FC")
+        application._store_match_events(self.match_id, FootballProvider.parse_match_events({
+            "events": [{"id": "g-final", "type": "goal", "minute": 90, "player": "Scorer"}]
+        }), "Alpha FC", "Beta FC")
         response = self.client.get(f"/match/{self.match_id}/live-data")
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
