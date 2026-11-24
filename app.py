@@ -342,6 +342,105 @@ def team_logo():
  except ProviderError:
   return jsonify({"logo":None}),503
 
+
+def _daily_top_ten(rows):
+ """Rank the day's strongest model picks, spreading them across at least five fixtures."""
+ groups = {}
+ def read(record, key):
+  try:
+   return record[key]
+  except (KeyError, IndexError, TypeError):
+   return None
+ def pct(value):
+  try:
+   number=float(value)
+  except (TypeError,ValueError):
+   return None
+  if 1 < number <= 100:
+   pass
+  elif 0 <= number <= 1:
+   number *= 100
+  else:
+   return None
+  return max(0,min(100,round(number)))
+ def add(group, market, prediction, probability):
+  score=pct(probability)
+  if score is None or not str(prediction or "").strip():
+   return
+  group["picks"].append({
+   "id":group["id"],"home":group["home"],"away":group["away"],
+   "league":group["league"],"kickoff":group["kickoff"],
+   "market":market,"prediction":str(prediction).strip(),"confidence":score
+  })
+ for row in rows:
+  match_id=read(row,"id")
+  try:
+   probs=json.loads(read(row,"market_probabilities") or "{}")
+  except (TypeError,ValueError):
+   probs={}
+  try:
+   confidence=json.loads(read(row,"prediction_confidence") or "{}")
+  except (TypeError,ValueError):
+   confidence={}
+  group={"id":match_id,"home":read(row,"home") or "Ev sahibi",
+   "away":read(row,"away") or "Deplasman","league":read(row,"league") or "",
+   "kickoff":read(row,"kickoff") or "","picks":[]}
+  result=probs.get("match_result")
+  if isinstance(result,dict) and result:
+   key=max(result,key=lambda item:pct(result[item]) if pct(result[item]) is not None else -1)
+   add(group,"Maç Sonucu",{"1":"MS 1","X":"MS X","2":"MS 2"}.get(str(key),str(key)),result[key])
+  first_result=probs.get("first_half_result")
+  if isinstance(first_result,dict) and first_result:
+   key=max(first_result,key=lambda item:pct(first_result[item]) if pct(first_result[item]) is not None else -1)
+   add(group,"İlk Yarı Sonucu",{"1":"İY 1","X":"İY X","2":"İY 2"}.get(str(key),str(key)),first_result[key])
+  goals=probs.get("goals")
+  if isinstance(goals,dict):
+   for line in ("1.5","2.5","3.5","4.5"):
+    values=goals.get(line) or goals.get(line.replace(".",","))
+    if not isinstance(values,dict):
+     continue
+    over=pct(values.get("over")); under=pct(values.get("under"))
+    if over is None or under is None:
+     continue
+    add(group,line.replace(".",",")+" Gol","Üst" if over>=under else "Alt",max(over,under))
+  for key,label in (("btts","KG"),("first_half_btts","İlk Yarı KG"),("second_half_btts","İkinci Yarı KG")):
+   values=probs.get(key)
+   if isinstance(values,dict) and values:
+    selection=max(values,key=lambda item:pct(values[item]) if pct(values[item]) is not None else -1)
+    add(group,label,selection,values[selection])
+  htft=probs.get("htft")
+  if isinstance(htft,dict) and htft:
+   selection=max(htft,key=lambda item:pct(htft[item]) if pct(htft[item]) is not None else -1)
+   add(group,"İY/MS",selection,htft[selection])
+  # Older rows may have confidence/prediction columns but no full probability map.
+  fallback=(("match_result","Maç Sonucu"),("over25","2,5 Gol"),("btts","KG"),
+   ("first_half_btts","İlk Yarı KG"),("second_half_btts","İkinci Yarı KG"),("htft","İY/MS"))
+  present={pick["market"] for pick in group["picks"]}
+  for key,label in fallback:
+   prediction=read(row,key)
+   if label in present or not prediction:
+    continue
+   add(group,label,prediction,confidence.get(key))
+  if group["picks"]:
+   group["picks"].sort(key=lambda item:(-item["confidence"],item["market"]))
+   groups[match_id]=group
+ # If five distinct eligible fixtures do not exist, do not publish a misleading 10-pick slate.
+ if len(groups)<5:
+  return [],len(groups)
+ ordered=sorted(groups.values(),key=lambda group:(-group["picks"][0]["confidence"],group["kickoff"],str(group["id"])))
+ selected=[]
+ # First pass: one best pick from each fixture, ensuring maximum match diversity.
+ for group in ordered:
+  if len(selected)>=10:
+   break
+  selected.append(group["picks"][0])
+ # Second pass: add only one additional pick per fixture, strongest options first.
+ second=[group["picks"][1] for group in ordered if len(group["picks"])>1]
+ second.sort(key=lambda item:(-item["confidence"],item["kickoff"],str(item["id"])))
+ selected.extend(second[:max(0,10-len(selected))])
+ return selected[:10],len(groups)
+
+
 @app.route("/")
 def index():
  # Render's host clock may be UTC; the bulletin date must follow Turkish local time.
@@ -397,11 +496,20 @@ def index():
    ) AS duplicate_rank
    FROM matches WHERE substr(kickoff,1,10)=? AND status='live'
   ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
+  daily_candidate_rows=c.execute("""SELECT id,home,away,league,kickoff,status,
+   match_result,over25,btts,first_half_btts,second_half_btts,htft,
+   prediction_confidence,market_probabilities
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
+    AND COALESCE(prediction_message,'')=''
+    AND COALESCE(market_probabilities,'{}') NOT IN ('','{}')
+   ORDER BY kickoff""",(day,)).fetchall()
+  daily_picks,daily_match_count=_daily_top_ten(daily_candidate_rows)
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
   unverified_count=unverified,live_count=live_count,today_total=today_total,
   success_rate=success_rate,recent_count=recent_count,recent_wins=recent_wins,
+  daily_picks=daily_picks,daily_pick_count=len(daily_picks),daily_match_count=daily_match_count,
   live_featured=live_featured)
 
 @app.post("/sync/fixtures")
