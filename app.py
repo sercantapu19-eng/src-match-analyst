@@ -439,7 +439,7 @@ def refresh_live_fixtures():
    # Include scheduled rows too: a match must be promoted to live when the
    # provider confirms kickoff, not left in "time passed / verify" forever.
    rows=c.execute("""SELECT id,home,away,status_short,elapsed_minute,home_goals,away_goals
-    FROM matches WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live')
+    FROM matches WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live','finished')
     ORDER BY kickoff""",(day,)).fetchall()
    by_pair={(team_key(row["home"]),team_key(row["away"])):row for row in rows}
    updated_ids=set()
