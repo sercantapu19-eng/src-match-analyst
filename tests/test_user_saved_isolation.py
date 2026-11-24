@@ -33,11 +33,11 @@ class SavedMatchIsolationTests(unittest.TestCase):
         with application.db() as conn:
             self.match_one = conn.execute(
                 "INSERT INTO matches(home,away,kickoff,status,created_at) VALUES(?,?,?,?,?) RETURNING id",
-                ("Alpha FC", "Beta FC", date.today().isoformat() + "T18:00:00+03:00", "scheduled", "test"),
+                ("Alpha FC", "Beta FC", date.today().isoformat() + "T23:50:00+03:00", "scheduled", "test"),
             ).fetchone()["id"]
             self.match_two = conn.execute(
                 "INSERT INTO matches(home,away,kickoff,status,created_at) VALUES(?,?,?,?,?) RETURNING id",
-                ("Gamma FC", "Delta FC", date.today().isoformat() + "T20:00:00+03:00", "scheduled", "test"),
+                ("Gamma FC", "Delta FC", date.today().isoformat() + "T23:55:00+03:00", "scheduled", "test"),
             ).fetchone()["id"]
 
         self.client = application.app.test_client()
