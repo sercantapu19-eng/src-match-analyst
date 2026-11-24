@@ -486,7 +486,11 @@ def _load_match_event_rows(c, match_id):
   item["team"]=item.pop("team_side") or ""
   # Older fallback IDs may differ for one incident; collapse identical
   # type/minute/side/player rows without deleting historical DB records.
-  if item["kind"] in ("goal","own_goal","penalty_scored","yellow_card","red_card","second_yellow","corner"):
+  if (item["kind"] in ("goal","own_goal","penalty_scored","yellow_card","red_card","second_yellow","corner")
+      and item["team"] in ("home","away")
+      and (item["kind"] != "corner" or item.get("primary_player") or item.get("secondary_player"))):
+   # Keep same-minute corners when the provider gives no player identity:
+   # they may be distinct real corners, not duplicate polling records.
    semantic=(item["kind"],str(item.get("minute") or ""),item.get("extra_minute"),item["team"],
     str(item.get("primary_player") or "").strip().casefold(),
     str(item.get("secondary_player") or "").strip().casefold())
