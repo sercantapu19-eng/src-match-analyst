@@ -59,7 +59,7 @@ class BulletinFixtureFilteringTests(unittest.TestCase):
 
     def test_past_kickoffs_are_separated_from_upcoming_without_marking_finished(self):
         past = self.now - timedelta(hours=2)
-        future = self.now + timedelta(hours=2)
+        future = self.now + timedelta(minutes=30)
         self.add_match("Past FC", "Old United", past)
         self.add_match("Future FC", "New United", future)
 
