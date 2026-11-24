@@ -324,6 +324,24 @@ init_auth_db()
 with db() as _index_db:
  _index_db.execute("CREATE INDEX IF NOT EXISTS idx_user_saved_matches_user_saved_at ON user_saved_matches(user_id, saved_at DESC)")
 
+_TEAM_LOGO_CACHE = {}
+
+@app.get("/api/team-logo")
+def team_logo():
+ team_name=(request.args.get("name") or "").strip()[:100]
+ if not team_name:
+  return jsonify({"logo":None}),400
+ cache_key=team_name.casefold()
+ cached=_TEAM_LOGO_CACHE.get(cache_key)
+ if cached and cached[0] > time.time():
+  return jsonify({"logo":cached[1]})
+ try:
+  logo=FootballProvider(os.environ.get("SPORTSCORE_API_KEY")).search_team_logo(team_name)
+  _TEAM_LOGO_CACHE[cache_key]=(time.time()+86400,logo)
+  return jsonify({"logo":logo})
+ except ProviderError:
+  return jsonify({"logo":None}),503
+
 @app.route("/")
 def index():
  # Render's host clock may be UTC; the bulletin date must follow Turkish local time.
@@ -351,6 +369,14 @@ def index():
    SELECT * FROM ranked WHERE duplicate_rank=1 ORDER BY kickoff""",(uid,day,status_filter)).fetchall()
   saved=c.execute("SELECT COUNT(*) FROM user_saved_matches WHERE user_id=?",(uid,)).fetchone()[0]
   done=c.execute("SELECT COUNT(*) FROM matches WHERE status='finished'").fetchone()[0]
+  today_total=c.execute("""SELECT COUNT(*) FROM (SELECT ROW_NUMBER() OVER (PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id) rank_no FROM matches WHERE substr(kickoff,1,10)=?) ranked WHERE rank_no=1""",(day,)).fetchone()[0]
+  settled=c.execute("SELECT COUNT(*) total,SUM(CASE WHEN outcome='won' THEN 1 ELSE 0 END) won FROM results WHERE outcome IN ('won','lost')").fetchone()
+  success_rate=round((settled['won'] or 0)*100/settled['total']) if settled['total'] else 0
+  recent=c.execute("SELECT outcome FROM results WHERE outcome IN ('won','lost') ORDER BY id DESC LIMIT 10").fetchall()
+  recent_count=len(recent); recent_wins=sum(1 for item in recent if item['outcome']=='won')
+  live_featured=c.execute("""SELECT id,home,away,league,kickoff,home_goals,away_goals,
+   ht_home,ht_away,elapsed_minute,status_short FROM matches
+   WHERE status='live' ORDER BY COALESCE(elapsed_minute,0) DESC,kickoff DESC LIMIT 1""").fetchone()
   upcoming=c.execute("""SELECT COUNT(*) FROM (
    SELECT ROW_NUMBER() OVER (
     PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
@@ -374,7 +400,9 @@ def index():
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
-  unverified_count=unverified,live_count=live_count)
+  unverified_count=unverified,live_count=live_count,today_total=today_total,
+  success_rate=success_rate,recent_count=recent_count,recent_wins=recent_wins,
+  live_featured=live_featured)
 
 @app.post("/sync/fixtures")
 @admin_required
