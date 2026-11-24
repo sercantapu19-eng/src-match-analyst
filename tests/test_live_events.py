@@ -34,6 +34,25 @@ class LiveEventParserTests(unittest.TestCase):
         self.assertEqual(by_id["sportscore:v1"]["kind"], "goal_cancelled")
         self.assertEqual(by_id["sportscore:v1"]["related_event_uid"], "sportscore:g1")
 
+    def test_goal_extracts_participant_team_and_subparticipant_scorer(self):
+        events = FootballProvider.parse_match_events({
+            "events": [{
+                "id": "nested-goal",
+                "type": "goal",
+                "minute": 34,
+                "participant_name": "Alpha FC",
+                "subparticipant_name": "Alex Striker",
+                "is_home": True,
+                "additional_info": {"assistant_name": "Sam Playmaker"},
+            }]
+        })
+        self.assertEqual(len(events), 1)
+        goal = events[0]
+        self.assertEqual(goal["primary_player"], "Alex Striker")
+        self.assertEqual(goal["secondary_player"], "Sam Playmaker")
+        self.assertEqual(goal["team"], "Alpha FC")
+        self.assertEqual(goal["team_side"], "home")
+
     def test_fallback_event_identity_is_stable(self):
         payload = {"events": [
             {"type": "goal", "minute": 21, "player": "Scorer", "team": "Alpha"}

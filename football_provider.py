@@ -854,9 +854,30 @@ class FootballProvider:
             elif base_minute is not None:
                 minute_text = str(base_minute)
 
-            player = person_name(FootballProvider.pick(item, "player", "player_name", "playerName", "scorer", "athlete", default=""))
-            assist = person_name(FootballProvider.pick(item, "assist", "assist_player", "assistName", "assisted_by", default=""))
-            team_value = FootballProvider.pick(item, "team", "team_name", "teamName", "team_side", "side", default="")
+            # SportScore and upstream incident feeds expose scorer/team names
+            # under several shapes. Prefer explicit player/team fields, then
+            # accept the common participant/subparticipant representation.
+            player_value = FootballProvider.pick(
+                item, "player", "player_name", "playerName", "scorer", "scorer_name",
+                "scorerName", "goal_scorer", "goalScorer", "subparticipant_name",
+                "subparticipantName", "athlete", default=""
+            )
+            player = person_name(player_value)
+            assist_value = FootballProvider.pick(
+                item, "assist", "assist_player", "assistName", "assisted_by",
+                "assist_name", "assistant_name", default=""
+            )
+            if not assist_value:
+                additional_info = FootballProvider.pick(item, "additional_info", "additionalInfo", default={})
+                if isinstance(additional_info, dict):
+                    assist_value = FootballProvider.pick(
+                        additional_info, "assistant_name", "assistantName", "assist", "assist_name", default=""
+                    )
+            assist = person_name(assist_value)
+            team_value = FootballProvider.pick(
+                item, "team", "team_name", "teamName", "participant_name",
+                "participantName", "participant", "competitor", default=""
+            )
             team = person_name(team_value)
             incoming = person_name(FootballProvider.pick(item, "player_in", "playerIn", "in_player", "sub_in", "incoming_player", default=""))
             outgoing = person_name(FootballProvider.pick(item, "player_out", "playerOut", "out_player", "sub_out", "outgoing_player", default=""))
@@ -875,9 +896,13 @@ class FootballProvider:
                 "goal_event_id", "goalEventId"
             )
             event_status = "reviewing" if kind == "var_review" else "confirmed"
-            team_side = str(FootballProvider.pick(item, "team_side", "side", default="") or "").casefold()
+            team_side = str(FootballProvider.pick(
+                item, "team_side", "side", "participant_side", "participantSide", default=""
+            ) or "").casefold()
             if team_side not in ("home", "away"):
-                team_side = ""
+                is_home = FootballProvider.pick(item, "is_home", "isHome", "home")
+                is_away = FootballProvider.pick(item, "is_away", "isAway", "away")
+                team_side = "home" if is_home is True else "away" if is_away is True else ""
             canonical = {
                 "kind": kind, "minute": minute_text, "team": team, "player": player,
                 "incoming": incoming, "outgoing": outgoing, "detail": detail_text,
