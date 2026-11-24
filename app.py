@@ -1042,35 +1042,50 @@ def detail(mid):
 
 @app.get("/match/<int:mid>/live-data")
 def match_live_data(mid):
- # Read-only endpoint: never modifies matches, saved selections, or result records.
+ # Read-only endpoint: reads the saved fixture and provider feeds only.
  with db() as c:
-  row=c.execute("SELECT id,status,status_short,elapsed_minute,home_goals,away_goals,ht_home,ht_away,external_id FROM matches WHERE id=?",(mid,)).fetchone()
+  row=c.execute("SELECT id,home,away,kickoff,status,status_short,elapsed_minute,home_goals,away_goals,ht_home,ht_away,external_id FROM matches WHERE id=?",(mid,)).fetchone()
  if not row: return jsonify({"error":"Maç bulunamadı."}),404
  match=dict(row)
  if match["status"]!="live":
   return jsonify({"status":match["status"],"events":[],"minute":match["elapsed_minute"]})
  try:
   provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
-  payload=provider.match_detail(match.get("external_id"))
-  events=provider.parse_match_events(payload)
-  fixtures=provider.parse_fixtures_payload(payload)
-  fixture=fixtures[0] if fixtures else {}
-  minute=fixture.get("elapsed_minute") or match.get("elapsed_minute")
-  code=str(fixture.get("status_short") or match.get("status_short") or "").upper()
+  # external_id may be empty or an upstream numeric ID, not the widget slug.
+  fixture=provider.find_live_fixture(match["home"],match["away"],match.get("kickoff"))
+  if not fixture:
+   return jsonify({"status":"unavailable","minute":match.get("elapsed_minute"),
+    "score":f"{match['home_goals']} – {match['away_goals']}" if match["home_goals"] is not None else None,
+    "events":[],"events_available":False,
+    "message":"Bu karşılaşma canlı sağlayıcı listesinde eşleştirilemedi."})
+  slug=fixture.get("slug")
+  detail=provider.match_detail(slug) if slug else {}
+  detail_fixtures=provider.parse_fixtures_payload(detail) if detail else []
+  detail_fixture=detail_fixtures[0] if detail_fixtures else {}
+  minute=fixture.get("elapsed_minute")
+  if minute is None: minute=detail_fixture.get("elapsed_minute")
+  if minute is None: minute=match.get("elapsed_minute")
+  code=str(fixture.get("status_short") or detail_fixture.get("status_short") or match.get("status_short") or "").upper()
   period="halftime" if code in ("HT","INT","BREAK","BT") else "finished" if code in ("FT","AET","PEN") else "second_half" if code in ("2H","2ND_HALF") else "first_half" if code in ("1H","1ST_HALF") else "live"
-  hg,ag=fixture.get("home_goals"),fixture.get("away_goals")
-  hh,ha=fixture.get("ht_home"),fixture.get("ht_away")
+  hg=fixture.get("home_goals") if fixture.get("home_goals") is not None else detail_fixture.get("home_goals")
+  ag=fixture.get("away_goals") if fixture.get("away_goals") is not None else detail_fixture.get("away_goals")
+  if hg is None: hg=match.get("home_goals")
+  if ag is None: ag=match.get("away_goals")
+  hh=detail_fixture.get("ht_home") if detail_fixture.get("ht_home") is not None else match.get("ht_home")
+  ha=detail_fixture.get("ht_away") if detail_fixture.get("ht_away") is not None else match.get("ht_away")
+  events=provider.parse_match_events(detail) if detail else []
   return jsonify({"status":period,"minute":minute,
    "minute_label":"Devre Arası" if period=="halftime" else "Maç Tamamlandı" if period=="finished" else
     (f"{minute}' · {'2. Yarı' if period=='second_half' else '1. Yarı' if period=='first_half' else 'Canlı'}" if minute is not None else
-     ("2. Yarı" if period=="second_half" else "1. Yarı" if period=="first_half" else "Canlı dakika bekleniyor")),
-   "score":f"{hg} – {ag}" if hg is not None and ag is not None else (f"{match['home_goals']} – {match['away_goals']}" if match["home_goals"] is not None else None),
-   "ht_score":f"{hh} – {ha}" if hh is not None and ha is not None else (f"{match['ht_home']} – {match['ht_away']}" if match["ht_home"] is not None else None),
-   "events":events,"events_available":bool(events)})
+     ("2. Yarı" if period=="second_half" else "1. Yarı" if period=="first_half" else "Canlı dakika sağlayıcıda henüz yok")),
+   "score":f"{hg} – {ag}" if hg is not None and ag is not None else None,
+   "ht_score":f"{hh} – {ha}" if hh is not None and ha is not None else None,
+   "events":events,"events_available":bool(events),
+   "message":None if events else "Canlı skor alındı; olay listesi sağlayıcı detay yanıtında henüz bulunamadı."})
  except ProviderError as exc:
   app.logger.warning("Live detail unavailable for match %s: %s",mid,exc)
   return jsonify({"status":"unavailable","minute":match.get("elapsed_minute"),"events":[],
-   "events_available":False,"message":"Canlı olay verisi şu anda alınamıyor."}),502
+   "events_available":False,"message":"Canlı maç verisi şu anda alınamıyor."}),502
 
 @app.post("/match/<int:mid>/status")
 @admin_required

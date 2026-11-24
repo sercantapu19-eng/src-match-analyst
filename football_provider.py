@@ -230,6 +230,7 @@ class FootballProvider:
                     return None
             output.append({
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
+                "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "kickoff": self.local_kickoff(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),
@@ -452,6 +453,41 @@ class FootballProvider:
             fixture for fixture in self.parse_fixtures_payload(payload)
             if self.is_current_live_fixture(fixture)
         ]
+
+
+
+    def find_live_fixture(self, home, away, kickoff=None):
+        """Resolve a database fixture against the provider live feed without external_id."""
+        from datetime import datetime, timezone
+        target_home = self._normalize_search_name(home)
+        target_away = self._normalize_search_name(away)
+        if not target_home or not target_away:
+            return None
+        candidates = []
+        for fixture in self.live_matches(limit=50):
+            if self._normalize_search_name(fixture.get("home")) != target_home:
+                continue
+            if self._normalize_search_name(fixture.get("away")) != target_away:
+                continue
+            distance = None
+            if kickoff and fixture.get("kickoff"):
+                try:
+                    target_time = datetime.fromisoformat(str(kickoff).replace("Z", "+00:00"))
+                    feed_time = datetime.fromisoformat(str(fixture["kickoff"]).replace("Z", "+00:00"))
+                    if target_time.tzinfo is None: target_time = target_time.replace(tzinfo=timezone.utc)
+                    if feed_time.tzinfo is None: feed_time = feed_time.replace(tzinfo=timezone.utc)
+                    distance = abs((target_time - feed_time).total_seconds())
+                except (TypeError, ValueError, OverflowError):
+                    distance = None
+            candidates.append((distance, fixture))
+        if not candidates: return None
+        with_time = [(distance, fixture) for distance, fixture in candidates if distance is not None]
+        if with_time:
+            with_time.sort(key=lambda item: item[0])
+            if with_time[0][0] > 4 * 60 * 60: return None
+            if len(with_time) > 1 and with_time[0][0] == with_time[1][0]: return None
+            return with_time[0][1]
+        return candidates[0][1] if len(candidates) == 1 else None
 
 
     @staticmethod

@@ -297,5 +297,37 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(events[5]["detail"],"↓ Shoji Fujio  ↑ Mao Hosoya")
         self.assertEqual(events[7]["label"],"İkinci yarı başladı")
 
+
+    def test_parse_widget_fixture_preserves_slug_separately_from_numeric_id(self):
+        provider = FootballProvider()
+        rows = provider.parse_fixtures_payload({"matches": [{
+            "id": 7420812, "slug": "home-vs-away-live", "home": "Home FC",
+            "away": "Away FC", "time": "2026-11-24T10:00:00Z",
+            "status": "live", "status_text": "Live 62'", "home_score": 2, "away_score": 1
+        }]})
+        self.assertEqual(rows[0]["id"], "7420812")
+        self.assertEqual(rows[0]["slug"], "home-vs-away-live")
+
+    def test_find_live_fixture_matches_team_names_and_kickoff_without_external_id(self):
+        provider = FootballProvider()
+        provider.live_matches = lambda limit=50: [{
+            "home": "Newcastle United Jets", "away": "Kashiwa Reysol",
+            "kickoff": "2026-11-24T10:45:00+03:00", "slug": "newcastle-jets-vs-kashiwa-reysol",
+            "elapsed_minute": 76, "status_short": "2H", "home_goals": 1, "away_goals": 2
+        }]
+        found = provider.find_live_fixture("Newcastle Jets", "Kashiwa Reysol", "2026-11-24T10:45:00+03:00")
+        self.assertIsNotNone(found)
+        self.assertEqual(found["slug"], "newcastle-jets-vs-kashiwa-reysol")
+        self.assertEqual(found["elapsed_minute"], 76)
+
+    def test_find_live_fixture_rejects_ambiguous_team_match_without_kickoff(self):
+        provider = FootballProvider()
+        provider.live_matches = lambda limit=50: [
+            {"home":"A FC","away":"B FC","slug":"a-b-1","kickoff":"2026-11-24T10:00:00+00:00"},
+            {"home":"A FC","away":"B FC","slug":"a-b-2","kickoff":"2026-11-24T12:00:00+00:00"}
+        ]
+        self.assertIsNone(provider.find_live_fixture("A FC","B FC"))
+
+
 if __name__ == "__main__":
     unittest.main()
