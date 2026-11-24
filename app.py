@@ -6,6 +6,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 from football_provider import FootballProvider, ProviderError
 from prediction_engine import predict, prepare_history
 from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required, is_admin_user
+from result_sync import actual_market_values, evaluate_prediction
 
 app=Flask(__name__)
 secret_key=os.environ.get("SECRET_KEY","").strip()
@@ -29,6 +30,12 @@ def inject_template_security():
 def enforce_csrf():
  if request.method not in ("POST","PUT","PATCH","DELETE"):
   return
+ if request.endpoint == "refresh_results":
+  expected_token=os.environ.get("RESULT_SYNC_TOKEN","").strip()
+  supplied=request.headers.get("Authorization","")
+  if expected_token and hmac.compare_digest(supplied, "Bearer "+expected_token):
+   return
+  abort(401, description="Sonuç senkronizasyon yetkisi geçersiz.")
  expected=session.get("_csrf_token")
  supplied=request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
  if not expected or not supplied or not hmac.compare_digest(expected,supplied):
@@ -482,6 +489,95 @@ def refresh_live_fixtures():
   app.logger.exception("Live fixture refresh failed")
   return jsonify({"error":str(exc)}),500
 
+@app.post("/sync/results/refresh")
+def refresh_results():
+ """Scheduled, token-protected sync for live and recently finished fixtures."""
+ token=os.environ.get("RESULT_SYNC_TOKEN","").strip()
+ if not token:
+  return jsonify({"error":"RESULT_SYNC_TOKEN yapılandırılmamış."}),503
+ supplied=request.headers.get("Authorization","")
+ if not hmac.compare_digest(supplied,"Bearer "+token):
+  return jsonify({"error":"Yetkisiz."}),401
+
+ today=datetime.now(ZoneInfo("Europe/Istanbul")).date()
+ days=[(today-timedelta(days=offset)).isoformat() for offset in (2,1,0)]
+ provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
+ fetched=0
+ matched=0
+ finished=0
+ evaluated=0
+ try:
+  # Keep provider requests bounded: three date-scoped calls per scheduled run.
+  fixtures=[]
+  for target_day in days:
+   fixtures.extend(provider.fixtures(target_day))
+  fetched=len(fixtures)
+  def key(value):
+   return " ".join(sorted(provider._normalize_search_name(value).split()))
+  with db() as c:
+   for fixture in fixtures:
+    state=fixture.get("status")
+    if state not in ("live","finished"):
+     continue
+    if state=="finished" and (fixture.get("home_goals") is None or fixture.get("away_goals") is None):
+     continue
+    kickoff_day=str(fixture.get("kickoff") or "")[:10]
+    if not kickoff_day:
+     continue
+    candidates=c.execute("""SELECT * FROM matches
+      WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live')
+      ORDER BY id""",(kickoff_day,)).fetchall()
+    home_key,away_key=key(fixture.get("home")),key(fixture.get("away"))
+    row=next((item for item in candidates
+      if key(item["home"])==home_key and key(item["away"])==away_key),None)
+    if not row:
+     continue
+    mid=row["id"]
+    c.execute("""UPDATE matches SET status=?,status_short=?,
+      home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals),
+      ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away),
+      elapsed_minute=CASE WHEN ?='finished' THEN NULL ELSE COALESCE(?,elapsed_minute) END
+      WHERE id=?""",
+      (state,fixture.get("status_short") or ("FT" if state=="finished" else "LIVE"),
+       fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),fixture.get("ht_away"),
+       state,fixture.get("elapsed_minute"),mid))
+    matched+=1
+    if state!="finished":
+     continue
+    finished+=1
+    sync_prediction_rows(c,mid)
+    current=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
+    actuals=actual_market_values(dict(current))
+    for market,actual in actuals.items():
+     if actual is None:
+      continue
+     label=dict(MARKETS).get(market)
+     if not label:
+      continue
+     result_row=c.execute("SELECT prediction FROM results WHERE match_id=? AND market=?",(mid,label)).fetchone()
+     if not result_row or not result_row["prediction"]:
+      continue
+     outcome=evaluate_prediction(result_row["prediction"],actual)
+     c.execute("UPDATE results SET actual=?,outcome=? WHERE match_id=? AND market=?",
+      (actual,outcome,mid,label))
+     evaluated+=1
+   c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
+    ("sportscore",today.isoformat(),datetime.utcnow().isoformat(),fetched,"success",
+     f"Sonuç senkronizasyonu: {fetched} sağlayıcı maçı, {matched} eşleşme, {finished} biten maç, {evaluated} pazar sonuçlandırıldı."))
+  return jsonify({"ok":True,"days":days,"fetched":fetched,"matched":matched,
+   "finished":finished,"evaluated_markets":evaluated,
+   "updated_at":datetime.now(ZoneInfo("Europe/Istanbul")).isoformat()})
+ except ProviderError as exc:
+  app.logger.warning("Result sync provider error: %s",exc)
+  with db() as c:
+   c.execute("INSERT INTO sync_log(provider,day,ran_at,status,message) VALUES(?,?,?,?,?)",
+    ("sportscore",today.isoformat(),datetime.utcnow().isoformat(),"error",str(exc)))
+  return jsonify({"error":str(exc)}),502
+ except Exception as exc:
+  app.logger.exception("Result sync failed")
+  return jsonify({"error":"Sonuç senkronizasyonu başarısız."}),500
+
+
 @app.post("/sync/history/start")
 @admin_required
 def start_history_sync():
@@ -757,8 +853,13 @@ def result(mid):
 @app.route("/saved")
 @login_required
 def saved():
- with db() as c:ms=c.execute("SELECT m.* FROM matches m JOIN user_saved_matches s ON s.match_id=m.id WHERE s.user_id=? ORDER BY s.saved_at DESC",(current_user_id(),)).fetchall()
- return render_template("saved.html",matches=ms)
+ with db() as c:
+  uid=current_user_id()
+  ms=c.execute("SELECT m.* FROM matches m JOIN user_saved_matches s ON s.match_id=m.id WHERE s.user_id=? ORDER BY s.saved_at DESC",(uid,)).fetchall()
+  rows=c.execute("""SELECT r.* FROM results r JOIN user_saved_matches s ON s.match_id=r.match_id WHERE s.user_id=? ORDER BY r.match_id,r.id""",(uid,)).fetchall()
+ results_by_match={}
+ for row in rows: results_by_match.setdefault(row["match_id"],[]).append(dict(row))
+ return render_template("saved.html",matches=ms,results_by_match=results_by_match)
 @app.route("/results")
 def results():
  with db() as c:

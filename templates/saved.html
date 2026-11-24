@@ -5,7 +5,15 @@
 <section class="panel saved-match">
  <h2>{{m.home}} – {{m.away}}</h2>
  <p>{{m.kickoff}} · {{m.league}}</p>
+ <p><strong>Durum:</strong> {{ "Tamamlandı" if m.status=="finished" else "Canlı" if m.status=="live" else "Başlamadı" }}</p>
+ {% if m.status=="finished" and m.home_goals is not none and m.away_goals is not none %}
+ <p><strong>Gerçek skor:</strong> {{m.home_goals}} – {{m.away_goals}}</p>
+ {% else %}<p><strong>Skor:</strong> —</p>{% endif %}
  <p>{{m.htft or "İY/MS tahmini yok"}} · {{m.over25 or "2,5 gol tahmini yok"}} · KG {{m.btts or "—"}} · Korner {{m.corners or "—"}}</p>
+ {% set match_results = results_by_match.get(m.id, []) %}
+ {% if match_results %}<div class="result-list"><strong>Tahmin sonuçları</strong>
+ {% for r in match_results %}<p>{{r.market}}: {{r.prediction}} → {{r.actual or "Sonuç bekleniyor"}} · {% if r.outcome=="won" %}<strong>Kazandı</strong>{% elif r.outcome=="lost" %}<strong>Kaybetti</strong>{% else %}Bekliyor{% endif %}</p>{% endfor %}
+ </div>{% endif %}
  <div class="detail-actions"><a class="button" href="/match/{{m.id}}">Maç analizini aç →</a><form method="post" action="/match/{{m.id}}/unsave"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="button secondary" type="submit">Listemden çıkar</button></form></div>
 </section>
 {% else %}

@@ -1,0 +1,37 @@
+name: Scheduled match result sync
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-match-result-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-results:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Validate sync configuration
+        env:
+          SYNC_TOKEN: ${{ secrets.RESULT_SYNC_TOKEN }}
+        run: |
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "::error::GitHub Actions secret RESULT_SYNC_TOKEN is not configured."
+            exit 1
+          fi
+      - name: Refresh live scores and finished results
+        env:
+          SYNC_TOKEN: ${{ secrets.RESULT_SYNC_TOKEN }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-delay 5 --max-time 90 \
+            -X POST "https://src-match-analyst.onrender.com/sync/results/refresh" \
+            -H "Authorization: Bearer $SYNC_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{}'
