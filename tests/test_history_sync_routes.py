@@ -115,7 +115,7 @@ class HistorySyncRouteTests(unittest.TestCase):
                 }]
 
         with patch.object(application, "FootballProvider", FakeProvider):
-            response = self.client.post("/sync/live/refresh", json={"date": "2026-11-23"}, headers={"X-CSRF-Token": "test-csrf-token"})
+            response = self.client.post("/sync/live/refresh", json={"date": datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()}, headers={"X-CSRF-Token": "test-csrf-token"})
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
