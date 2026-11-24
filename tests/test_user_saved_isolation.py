@@ -1,7 +1,8 @@
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import app as application
 import auth
@@ -63,6 +64,16 @@ class SavedMatchIsolationTests(unittest.TestCase):
             headers={"X-CSRF-Token": "isolation-test-token"},
         )
 
+    def _move_fixture_kickoffs_to_future(self):
+        future = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Istanbul")) + timedelta(hours=2)
+        with application.db() as conn:
+            conn.execute("UPDATE matches SET kickoff=? WHERE id=?", (future.isoformat(), self.match_one))
+            conn.execute(
+                "UPDATE matches SET kickoff=? WHERE id=?",
+                ((future + timedelta(minutes=30)).isoformat(), self.match_two),
+            )
+        return future.date().isoformat()
+
     def test_saved_matches_are_isolated_between_accounts(self):
         self._login_as(self.user_one, "one@example.com")
         self.assertEqual(self._save(self.match_one).status_code, 302)
@@ -78,7 +89,7 @@ class SavedMatchIsolationTests(unittest.TestCase):
 
     def test_homepage_fixture_card_has_add_action_and_shows_saved_state(self):
         self._login_as(self.user_one, "one@example.com")
-        day = date.today().isoformat()
+        day = self._move_fixture_kickoffs_to_future()
         page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
         self.assertIn("＋ Ekle", page)
         self.assertIn(f'action="/match/{self.match_one}/save"', page)
@@ -104,7 +115,7 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertIn("＋ Ekle", other_row)
 
     def test_guest_sees_add_action_that_leads_to_login(self):
-        day = date.today().isoformat()
+        day = self._move_fixture_kickoffs_to_future()
         page = self.client.get(f"/?date={day}&view=upcoming").get_data(as_text=True)
         self.assertIn("＋ Ekle", page)
         self.assertIn(f'href="/login?next=/match/{self.match_one}"', page)

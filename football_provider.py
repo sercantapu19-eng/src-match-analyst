@@ -420,7 +420,7 @@ class FootballProvider:
             response = self.session.get(
                 SEARCH_URL,
                 params={"sport": "football", "q": team_name, "limit": 20},
-                timeout=10,
+                timeout=5,
             )
         except requests.RequestException as exc:
             raise ProviderError(f"SportScore takım arama bağlantı hatası: {exc}") from exc
@@ -901,11 +901,71 @@ class FootballProvider:
 
         return sorted(output, key=lambda event: (event["sort_key"], event["event_uid"]))
 
+    @staticmethod
+    def _match_team_slug(value):
+        """Create a conservative URL slug from a team name."""
+        return "-".join(FootballProvider._normalize_search_name(value).split())
+
+    def match_slug_candidates(self, home, away):
+        """Return the direct team-name slug candidate first; it requires detail verification."""
+        home_slug = self._match_team_slug(home)
+        away_slug = self._match_team_slug(away)
+        if not home_slug or not away_slug:
+            return []
+        return [f"{home_slug}-vs-{away_slug}"]
+
+    def team_slug_match_candidates(self, home, away):
+        """Return a secondary candidate assembled from SportScore's verified team slugs."""
+        import re
+
+        home_ref = self.search_team_slug(home)
+        away_ref = self.search_team_slug(away)
+        slug_pattern = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$", re.I)
+        if (home_ref and away_ref and slug_pattern.fullmatch(str(home_ref))
+                and slug_pattern.fullmatch(str(away_ref))
+                and not str(home_ref).isdigit() and not str(away_ref).isdigit()):
+            candidate = f"{home_ref}-vs-{away_ref}"
+            direct = self.match_slug_candidates(home, away)
+            return [] if candidate in direct else [candidate]
+        return []
+
+    @staticmethod
+    def match_detail_matches_teams(payload, home, away):
+        """Accept detail data only when it explicitly identifies the requested home/away pair."""
+        target_home = set(FootballProvider._normalize_search_name(home).split())
+        target_away = set(FootballProvider._normalize_search_name(away).split())
+        if not target_home or not target_away:
+            return False
+
+        def same_team(actual, target):
+            actual_tokens = set(FootballProvider._normalize_search_name(
+                FootballProvider.team_name(actual, "") if isinstance(actual, dict) else actual
+            ).split())
+            return bool(actual_tokens and actual_tokens == target)
+
+        def walk(value, depth=0):
+            if depth > 8:
+                return False
+            if isinstance(value, dict):
+                home_value = FootballProvider.pick(value, "home", "home_team", "team_home", "homeTeam")
+                away_value = FootballProvider.pick(value, "away", "away_team", "team_away", "awayTeam")
+                if home_value is not None and away_value is not None:
+                    if same_team(home_value, target_home) and same_team(away_value, target_away):
+                        return True
+                return any(walk(child, depth + 1) for child in value.values()
+                           if isinstance(child, (dict, list)))
+            if isinstance(value, list):
+                return any(walk(child, depth + 1) for child in value
+                           if isinstance(child, (dict, list)))
+            return False
+
+        return walk(payload)
+
     def match_detail(self, slug):
         """Fetch one match's details and official event timeline."""
         if not slug: return {}
         try:
-            response=self.session.get(MATCH_DETAIL_URL,params={"sport":"football","slug":str(slug)},timeout=10)
+            response=self.session.get(MATCH_DETAIL_URL,params={"sport":"football","slug":str(slug)},timeout=6)
         except requests.RequestException as exc:
             raise ProviderError(f"SportScore maç detay bağlantı hatası: {exc}") from exc
         if response.status_code==429: raise ProviderError("SportScore maç detay istek sınırı doldu.")

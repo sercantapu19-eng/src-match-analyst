@@ -1574,6 +1574,8 @@ def match_live_data(mid):
    "events_available":bool(saved_events)})
  provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
  fixture=None
+ resolved_detail_payload=None
+ claimed=False
  state=dict(state_row) if state_row else {}
  if match["status"]=="live":
   try:
@@ -1607,6 +1609,55 @@ def match_live_data(mid):
       app.logger.info("SportScore match slug resolved from team schedule: match_id=%s slug=%s",
        mid,fixture.get("slug") or fixture.get("id"))
       break
+   # Some lower-division fixtures are listed in SportScore but their fixture
+   # and team-schedule payloads omit match IDs/slugs. Try the documented
+   # match-detail slug pattern, but only accept a response that names both teams.
+   if fixture and not (fixture.get("slug") or fixture.get("id")):
+    claimed,state=_claim_match_event_refresh(mid,"")
+    if claimed:
+     resolved_detail_payload=None
+     resolved_slug=""
+     try:
+      candidate_slugs=provider.match_slug_candidates(match.get("home"),match.get("away"))
+      detail_blocked=False
+      for candidate_slug in candidate_slugs:
+       try:
+        candidate_payload=provider.match_detail(candidate_slug)
+       except ProviderError as detail_error:
+        app.logger.info("SportScore candidate detail not found: match_id=%s slug=%s error=%s",
+         mid,candidate_slug,detail_error)
+        if any(code in str(detail_error) for code in ("HTTP 401","HTTP 403","HTTP 429")):
+         detail_blocked=True
+         break
+        continue
+       if provider.match_detail_matches_teams(candidate_payload,match.get("home"),match.get("away")):
+        resolved_slug=candidate_slug
+        resolved_detail_payload=candidate_payload
+        break
+      if not resolved_slug and not detail_blocked:
+       for candidate_slug in provider.team_slug_match_candidates(match.get("home"),match.get("away")):
+        try:
+         candidate_payload=provider.match_detail(candidate_slug)
+        except ProviderError as detail_error:
+         app.logger.info("SportScore team-slug detail not found: match_id=%s slug=%s error=%s",
+          mid,candidate_slug,detail_error)
+         if any(code in str(detail_error) for code in ("HTTP 401","HTTP 403","HTTP 429")):
+          break
+         continue
+        if provider.match_detail_matches_teams(candidate_payload,match.get("home"),match.get("away")):
+         resolved_slug=candidate_slug
+         resolved_detail_payload=candidate_payload
+         break
+      if resolved_slug:
+       fixture=dict(fixture)
+       fixture["slug"]=resolved_slug
+       app.logger.info("SportScore match slug verified from team names: match_id=%s slug=%s",
+        mid,resolved_slug)
+      else:
+       _finish_match_event_refresh(mid,error="SportScore eşleşen maç detayını takım adlarıyla doğrulayamadı.")
+     except Exception as resolve_error:
+      _finish_match_event_refresh(mid,error=str(resolve_error))
+      app.logger.exception("SportScore match slug fallback failed for match %s",mid)
   except ProviderError as exc:
    app.logger.warning("SportScore live-list unavailable for match %s: %s",mid,exc)
   except Exception:
@@ -1647,10 +1698,11 @@ def match_live_data(mid):
   ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
   ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
  if provider_slug:
-  claimed,state=_claim_match_event_refresh(mid,provider_slug)
+  if not claimed:
+   claimed,state=_claim_match_event_refresh(mid,provider_slug)
   if claimed:
    try:
-    payload=provider.match_detail(provider_slug)
+    payload=resolved_detail_payload or provider.match_detail(provider_slug)
     events=provider.parse_match_events(payload)
     _store_match_events(mid,events,match.get("home"),match.get("away"))
     _finish_match_event_refresh(mid,provider_slug=provider_slug,status=period,minute=minute,
