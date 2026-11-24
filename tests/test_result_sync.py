@@ -1,6 +1,6 @@
 import unittest
 
-from result_sync import actual_market_values, evaluate_prediction
+from result_sync import actual_market_values, evaluate_prediction, prefer_saved_match
 
 
 class ResultSyncTests(unittest.TestCase):
@@ -32,6 +32,18 @@ class ResultSyncTests(unittest.TestCase):
         self.assertNotIn("htft", actual)
         self.assertNotIn("first_half_btts", actual)
         self.assertNotIn("second_half_btts", actual)
+
+    def test_saved_row_is_preferred_when_provider_created_duplicate(self):
+        saved = {"id": 975, "is_saved": True}
+        duplicate = {"id": 1175, "is_saved": False}
+        self.assertIs(prefer_saved_match([saved, duplicate]), saved)
+        self.assertIs(prefer_saved_match([duplicate, saved]), saved)
+
+    def test_ambiguous_unsaved_duplicates_are_not_guessed(self):
+        first = {"id": 1, "is_saved": False}
+        second = {"id": 2, "is_saved": False}
+        self.assertIsNone(prefer_saved_match([first, second]))
+        self.assertIs(prefer_saved_match([first]), first)
 
     def test_prediction_comparison(self):
         self.assertEqual(evaluate_prediction("Üst 2,5", "Üst 2,5"), "won")
