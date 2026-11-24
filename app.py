@@ -422,8 +422,24 @@ def _daily_top_ten(rows):
     continue
    add(group,label,prediction,confidence.get(key))
   if group["picks"]:
-   group["picks"].sort(key=lambda item:(-item["confidence"],item["market"]))
-   groups[match_id]=group
+   # Match the same real fixture even if the provider inserted duplicate DB rows.
+   fixture_key=tuple(str(group[key] or "").strip().casefold() for key in ("home","away","league","kickoff"))
+   existing=groups.get(fixture_key)
+   if existing:
+    for pick in group["picks"]:
+     pick["id"]=existing["id"]
+    merged={pick["market"]:pick for pick in existing["picks"]}
+    for pick in group["picks"]:
+     previous=merged.get(pick["market"])
+     if previous is None or pick["confidence"]>previous["confidence"]:
+      merged[pick["market"]]=pick
+    existing["picks"]=list(merged.values())
+   else:
+    unique={pick["market"]:pick for pick in group["picks"]}
+    group["picks"]=list(unique.values())
+    groups[fixture_key]=group
+ for group in groups.values():
+  group["picks"].sort(key=lambda item:(-item["confidence"],item["market"]))
  # If five distinct eligible fixtures do not exist, do not publish a misleading 10-pick slate.
  if len(groups)<5:
   return [],len(groups)
@@ -502,7 +518,7 @@ def index():
    FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
     AND COALESCE(prediction_message,'')=''
     AND COALESCE(market_probabilities,'{}') NOT IN ('','{}')
-   ORDER BY kickoff""",(day,)).fetchall()
+   ORDER BY kickoff,id""",(day,)).fetchall()
   daily_picks,daily_match_count=_daily_top_ten(daily_candidate_rows)
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
