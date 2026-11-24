@@ -368,5 +368,16 @@ class FootballProviderTests(unittest.TestCase):
         self.assertIsNone(FootballProvider.find_matching_live_fixture(
             fixtures, "Chattogram City FC", "Brothers Union"))
 
+    def test_match_slug_is_derived_in_sportscore_documented_format(self):
+        self.assertEqual(
+            FootballProvider.match_slug_from_teams("Shashemene Ketema", "Bishoftu Ketema"),
+            "shashemene-ketema-vs-bishoftu-ketema",
+        )
+        self.assertEqual(
+            FootballProvider.match_slug_from_teams("São Paulo U20 Women", "Criciúma U20 (W)"),
+            "sao-paulo-u20-women-vs-criciuma-u20-w",
+        )
+        self.assertIsNone(FootballProvider.match_slug_from_teams("", "Bishoftu Ketema"))
+
 if __name__ == "__main__":
     unittest.main()
