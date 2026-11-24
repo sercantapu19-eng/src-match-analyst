@@ -46,6 +46,38 @@ def team_display(value):
 def goal_side(value):
  return _goal_side_label("2,5 Gol", value)
 
+@app.template_filter("market_tr")
+def market_tr(value):
+ labels={
+  "match_result":"Maç Sonucu",
+  "goals":"Toplam Gol (2,5)",
+  "btts":"Karşılıklı Gol (KG)",
+  "htft":"İlk Yarı / Maç Sonucu (İY/MS)",
+  "first_half_btts":"İlk Yarı Karşılıklı Gol",
+  "second_half_btts":"İkinci Yarı Karşılıklı Gol",
+  "corners":"Korner",
+ }
+ key=str(value or "").strip().casefold()
+ return labels.get(key, str(value or "Tahmin"))
+
+
+@app.template_filter("selection_tr")
+def selection_tr(value, market=None):
+ raw=str(value or "").strip()
+ key=str(market or "").strip().casefold()
+ if key=="goals":
+  return "Üst" if raw.casefold() in ("over","üst") else "Alt" if raw.casefold() in ("under","alt") else raw
+ if key=="btts":
+  return "Var" if raw.casefold() in ("var","yes","true") else "Yok" if raw.casefold() in ("yok","no","false") else raw
+ if key=="match_result":
+  return {"1":"MS 1","x":"MS X","2":"MS 2"}.get(raw.casefold(),raw)
+ if key=="htft":
+  return raw.replace("1/","1/").replace("x/","X/").replace("/x","/X")
+ if key in ("first_half_btts","second_half_btts"):
+  prefix="İY KG" if key=="first_half_btts" else "2. Yarı KG"
+  return prefix+" "+("Var" if raw.casefold() in ("var","yes") else "Yok" if raw.casefold() in ("yok","no") else raw)
+ return raw
+
 @app.before_request
 def enforce_csrf():
  if request.method not in ("POST","PUT","PATCH","DELETE"):
