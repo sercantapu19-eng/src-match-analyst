@@ -42,6 +42,56 @@ def evaluate_prediction(prediction, actual):
     return "won" if str(prediction or "").strip().casefold() == str(actual or "").strip().casefold() else "lost"
 
 
+
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+
+def _identity_time(value):
+    """Parse kickoff timestamps for conservative provider/local fixture matching."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("Europe/Istanbul"))
+    return parsed.astimezone(timezone.utc)
+
+
+def matching_fixture_rows(candidates, fixture, normalize_name, max_kickoff_gap_minutes=90):
+    """Return rows matching teams, league and kickoff proximity.
+
+    Incomplete identities fail closed. Exact duplicate local rows are all
+    returned so saved and displayed copies can be synchronized together.
+    """
+    def team_pair(home, away):
+        return (" ".join(sorted(normalize_name(str(home or "")).split())),
+                " ".join(sorted(normalize_name(str(away or "")).split())))
+
+    fixture_pair = team_pair(fixture.get("home"), fixture.get("away"))
+    fixture_league = " ".join(normalize_name(str(fixture.get("league") or "")).split())
+    fixture_time = _identity_time(fixture.get("kickoff"))
+    if not all(fixture_pair) or not fixture_league or fixture_time is None:
+        return []
+
+    matches = []
+    max_gap = max_kickoff_gap_minutes * 60
+    for row in candidates:
+        if team_pair(row.get("home"), row.get("away")) != fixture_pair:
+            continue
+        row_league = " ".join(normalize_name(str(row.get("league") or "")).split())
+        if not row_league or row_league != fixture_league:
+            continue
+        row_time = _identity_time(row.get("kickoff"))
+        if row_time is None or abs((row_time - fixture_time).total_seconds()) > max_gap:
+            continue
+        matches.append(row)
+    return matches
+
+
 def prefer_saved_match(candidates):
     """Prefer the user's original saved row when provider sync created duplicates."""
     rows = list(candidates or [])
