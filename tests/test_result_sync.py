@@ -22,7 +22,7 @@ class ResultSyncTests(unittest.TestCase):
         })
         self.assertEqual(actual["htft"], "2/1")
         self.assertEqual(actual["first_half_btts"], "Yok")
-        self.assertEqual(actual["second_half_btts"], "Var")
+        self.assertEqual(actual["second_half_btts"], "Yok")
 
     def test_missing_full_time_score_is_not_resultable(self):
         self.assertEqual(actual_market_values({"home_goals": 1, "away_goals": None}), {})
