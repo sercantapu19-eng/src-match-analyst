@@ -783,7 +783,7 @@ class FootballProvider:
             incoming = person_name(FootballProvider.pick(item, "player_in", "playerIn", "in_player", "sub_in", "incoming_player", default=""))
             outgoing = person_name(FootballProvider.pick(item, "player_out", "playerOut", "out_player", "sub_out", "outgoing_player", default=""))
             if kind == "substitution":
-                detail_text = "Çıkan: " + (outgoing or "Bilinmiyor") + " · Giren: " + (incoming or "Bilinmiyor")
+                detail_text = "↓ " + (outgoing or "Bilinmiyor") + "  ↑ " + (incoming or "Bilinmiyor")
             elif kind in ("var_review", "goal_cancelled"):
                 detail_text = detail or player
             else:
