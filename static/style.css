@@ -491,3 +491,11 @@ label,.muted,small{color:var(--muted)}
 @media(max-width:1250px){.saved-predictions-grid,.saved-matches-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:800px){.saved-predictions-grid,.saved-matches-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.saved-prediction-card,.saved-match-card{padding:11px}}
 @media(max-width:520px){.saved-predictions-grid,.saved-matches-grid{grid-template-columns:1fr}.saved-prediction-card{min-height:0}.saved-section-heading{align-items:flex-start}}
+
+
+/* Coupon draft hero: keep readable contrast in both themes. */
+.hero{background:var(--surface)!important;color:var(--text)!important;border-color:var(--line)!important;box-shadow:var(--shadow)!important}
+.hero h1,.hero h2,.hero p,.hero strong{color:var(--text)}
+.hero .stats div{background:var(--surface2)!important;border-color:var(--line)!important;color:var(--text)!important}
+.hero .stats b{color:var(--accent)!important}
+.hero .stats small{color:var(--muted)!important}
