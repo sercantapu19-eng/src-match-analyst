@@ -475,7 +475,7 @@ class FootballProvider:
         for item in rows:
             raw = str(FootballProvider.pick(item, "type", "event_type", "eventType", "incident", "kind", "name", "title", default="")).strip()
             detail = str(FootballProvider.pick(item, "detail", "description", "comment", "label", "sub_type", "subType", default="")).strip()
-            value = (raw + " " + detail).casefold()
+            value = (raw + " " + detail).casefold().replace("_", " ").replace("-", " ")
             if "corner" in value or "korner" in value: kind,label,icon="corner","Korner","🚩"
             elif "offside" in value or "ofsayt" in value: kind,label,icon="offside","Ofsayt","🚫"
             elif any(x in value for x in ("substitution","substitute","oyuncu değiş")): kind,label,icon="substitution","Oyuncu değişikliği","🔄"
