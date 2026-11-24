@@ -27,7 +27,7 @@ class DailyPredictionRefreshTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def _insert_todays_fixtures(self, count):
-        kickoff = (datetime.now(ZoneInfo("Europe/Istanbul")) + timedelta(hours=2)).isoformat()
+        kickoff = (datetime.now(ZoneInfo("Europe/Istanbul")) + timedelta(minutes=30)).isoformat()
         with application.db() as c:
             for i in range(count):
                 c.execute(
