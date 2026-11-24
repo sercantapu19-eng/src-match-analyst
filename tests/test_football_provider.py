@@ -311,7 +311,7 @@ class FootballProviderTests(unittest.TestCase):
     def test_find_live_fixture_matches_team_names_and_kickoff_without_external_id(self):
         provider = FootballProvider()
         provider.live_matches = lambda limit=50: [{
-            "home": "Newcastle United Jets", "away": "Kashiwa Reysol",
+            "home": "Newcastle Jets", "away": "Kashiwa Reysol",
             "kickoff": "2026-11-24T10:45:00+03:00", "slug": "newcastle-jets-vs-kashiwa-reysol",
             "elapsed_minute": 76, "status_short": "2H", "home_goals": 1, "away_goals": 2
         }]
