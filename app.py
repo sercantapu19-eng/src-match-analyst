@@ -324,6 +324,24 @@ init_auth_db()
 with db() as _index_db:
  _index_db.execute("CREATE INDEX IF NOT EXISTS idx_user_saved_matches_user_saved_at ON user_saved_matches(user_id, saved_at DESC)")
 
+_TEAM_LOGO_CACHE = {}
+
+@app.get("/api/team-logo")
+def team_logo():
+ team_name=(request.args.get("name") or "").strip()[:100]
+ if not team_name:
+  return jsonify({"logo":None}),400
+ cache_key=team_name.casefold()
+ cached=_TEAM_LOGO_CACHE.get(cache_key)
+ if cached and cached[0] > time.time():
+  return jsonify({"logo":cached[1]})
+ try:
+  logo=FootballProvider(os.environ.get("SPORTSCORE_API_KEY")).search_team_logo(team_name)
+  _TEAM_LOGO_CACHE[cache_key]=(time.time()+86400,logo)
+  return jsonify({"logo":logo})
+ except ProviderError:
+  return jsonify({"logo":None}),503
+
 @app.route("/")
 def index():
  # Render's host clock may be UTC; the bulletin date must follow Turkish local time.
