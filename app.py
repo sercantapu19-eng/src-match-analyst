@@ -22,7 +22,7 @@ def _is_placeholder_team_name(value):
   return False
  if text.casefold() in {"tea","tbd","tba","unknown","unknown team","team unknown","team not found","to be announced","n/a"}:
   return True
- return bool(re.fullmatch(r"(?i)team[\\s:_-]+[a-z0-9][a-z0-9_-]{7,}",text))
+ return bool(re.fullmatch(r"(?i)team[\s:_-]+[a-z0-9][a-z0-9_-]{7,}",text))
 
 
 def csrf_token():
