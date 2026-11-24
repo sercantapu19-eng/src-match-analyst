@@ -379,5 +379,36 @@ class FootballProviderTests(unittest.TestCase):
         )
         self.assertIsNone(FootballProvider.match_slug_from_teams("", "Bishoftu Ketema"))
 
+
+    def test_finished_status_overrides_stale_live_label_and_elapsed_clock(self):
+        provider = FootballProvider()
+        rows = provider.parse_fixtures_payload({
+            "matches": [
+                {
+                    "slug": "galatasaray-vs-aston-villa",
+                    "home": "Galatasaray",
+                    "away": "Aston Villa",
+                    "status": "live",
+                    "status_short": "FT",
+                    "elapsed": 90,
+                    "home_score": 1,
+                    "away_score": 0,
+                },
+                {
+                    "slug": "finished-with-clock",
+                    "home": "Team C",
+                    "away": "Team D",
+                    "status": "Match Finished",
+                    "elapsed": 90,
+                    "home_score": 2,
+                    "away_score": 1,
+                },
+            ]
+        })
+        self.assertEqual([row["status"] for row in rows], ["finished", "finished"])
+        self.assertEqual(rows[0]["home_goals"], 1)
+        self.assertEqual(rows[0]["away_goals"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

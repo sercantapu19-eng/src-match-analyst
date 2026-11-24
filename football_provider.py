@@ -332,12 +332,13 @@ class FootballProvider:
             finished_words = ("finished", "complete", "ended", "full_time", "fulltime",
                               "match_over", "after_extra_time", "after_penalties")
             elapsed_value = self.elapsed_minute(item)
-            if any(word in normalized_status for word in live_words) or code in live_codes:
-                state = "live"
-            # SportScore sometimes sends compact status text (FT/AET/PEN)
-            # without a separate status code.
-            elif normalized_status in ("ft", "aet", "pen", "finished", "ended") or any(word in normalized_status for word in finished_words) or code in finished_codes:
+            # Terminal status must win over stale clocks or contradictory
+            # generic labels. Some SportScore payloads keep elapsed=90 or
+            # even a stale "live" label after FT.
+            if normalized_status in ("ft", "aet", "pen", "finished", "ended") or any(word in normalized_status for word in finished_words) or code in finished_codes:
                 state = "finished"
+            elif any(word in normalized_status for word in live_words) or code in live_codes:
+                state = "live"
             # A positive elapsed minute is stronger evidence of a live match
             # than an unrecognized provider label. Do not infer status from
             # score values alone: some feeds populate score fields prematurely.
@@ -606,10 +607,12 @@ class FootballProvider:
                 raw_status = str(status_obj if status_obj not in (None, "") else self.pick(item, "status_text", "state", default="upcoming")).lower()
                 code = str(self.pick(item, "status_short", "status_code", "period", default="")).upper()
             elapsed_value = self.elapsed_minute(item)
-            if any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT") or elapsed_value is not None:
-                state = "live"
-            elif raw_status.strip() in ("ft", "aet", "pen", "finished", "ended") or any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT", "AET", "PEN", "FINISHED", "ENDED", "FULL_TIME", "FULLTIME"):
+            # Check terminal status before elapsed time: FT payloads may
+            # retain the final 90/120 minute clock.
+            if raw_status.strip() in ("ft", "aet", "pen", "finished", "ended") or any(s in raw_status for s in ("finished", "complete", "ended", "full_time", "full time", "match over")) or code in ("FT", "AET", "PEN", "FINISHED", "ENDED", "FULL_TIME", "FULLTIME"):
                 state = "finished"
+            elif any(s in raw_status for s in ("live", "in_progress", "in-play", "in play")) or code in ("1H", "HT", "2H", "ET", "P", "LIVE", "INT") or elapsed_value is not None:
+                state = "live"
             else:
                 state = "scheduled"
             score = item.get("score") if isinstance(item.get("score"), dict) else {}
