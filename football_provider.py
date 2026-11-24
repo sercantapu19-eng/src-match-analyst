@@ -230,6 +230,7 @@ class FootballProvider:
                     return None
             output.append({
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
+                "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "kickoff": self.local_kickoff(kickoff), "status": state, "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),
@@ -395,6 +396,7 @@ class FootballProvider:
                     return None
             output.append({
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
+                "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "kickoff": self.local_kickoff(kickoff), "status": state,
                 "status_short": code or raw_status.upper()[:12],
@@ -453,6 +455,45 @@ class FootballProvider:
             if self.is_current_live_fixture(fixture)
         ]
 
+
+    @staticmethod
+    def find_matching_live_fixture(fixtures, home, away, kickoff=None):
+        """Return one unambiguous live fixture for the exact home/away pair."""
+        target_home = FootballProvider._normalize_search_name(home)
+        target_away = FootballProvider._normalize_search_name(away)
+        candidates = [
+            fixture for fixture in (fixtures or [])
+            if isinstance(fixture, dict) and fixture.get("status") == "live"
+            and FootballProvider._normalize_search_name(fixture.get("home", "")) == target_home
+            and FootballProvider._normalize_search_name(fixture.get("away", "")) == target_away
+            and fixture.get("id")
+        ]
+        if not candidates:
+            return None
+        if kickoff:
+            try:
+                target_time = datetime.fromisoformat(str(kickoff).replace("Z", "+00:00"))
+                if target_time.tzinfo is None:
+                    target_time = target_time.replace(tzinfo=timezone.utc)
+                dated = []
+                for fixture in candidates:
+                    value = fixture.get("kickoff")
+                    if not value: continue
+                    try:
+                        fixture_time = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                        if fixture_time.tzinfo is None:
+                            fixture_time = fixture_time.replace(tzinfo=timezone.utc)
+                        delta = abs((fixture_time - target_time).total_seconds())
+                        if delta <= 4 * 60 * 60: dated.append((delta, fixture))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                if dated:
+                    dated.sort(key=lambda pair: pair[0])
+                    if len(dated) == 1 or dated[0][0] < dated[1][0]: return dated[0][1]
+                    return None
+            except (TypeError, ValueError, OverflowError):
+                pass
+        return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
     def parse_match_events(payload):
