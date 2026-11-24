@@ -448,21 +448,45 @@ class FootballProvider:
                 return next(iter(best_slugs))
         return None
 
-    def parse_fixtures_payload(self, payload):
-        """Parse serialized matches from either /fixtures or /team."""
+    def parse_fixtures_payload(self, payload, resolve_placeholders=True, max_team_lookups=2):
+        """Parse fixtures and resolve only uniquely identifiable provider placeholder teams."""
         rows = self._extract_rows(payload)
         output = []
+        lookup_attempts = set()
+
+        def unwrap_team(value):
+            while isinstance(value, dict) and isinstance(value.get("team"), dict):
+                value = value["team"]
+            return value
+
+        def side_name(value, fallback):
+            value = unwrap_team(value)
+            name = self.team_name(value, fallback)
+            if not self.is_placeholder_team_name(name) or not resolve_placeholders:
+                return name
+            reference = self.team_reference(value) or self.team_reference(name)
+            if reference and reference not in lookup_attempts and len(lookup_attempts) < max_team_lookups:
+                lookup_attempts.add(reference)
+                resolved = self.resolve_team_name(reference)
+                if resolved:
+                    return resolved
+            return name
+
         for item in rows:
             if not isinstance(item, dict):
                 continue
-            home = self.pick(item, "home", "home_team", "team_home", default={})
-            away = self.pick(item, "away", "away_team", "team_away", default={})
-            if isinstance(home, dict) and isinstance(home.get("team"), dict):
-                home = home["team"]
-            if isinstance(away, dict) and isinstance(away.get("team"), dict):
-                away = away["team"]
-            home_name = self.team_name(home, "Ev sahibi")
-            away_name = self.team_name(away, "Deplasman")
+            home = self.pick(item, "home", "home_team", "team_home", "homeTeam", default={})
+            away = self.pick(item, "away", "away_team", "team_away", "awayTeam", default={})
+            home = unwrap_team(home)
+            away = unwrap_team(away)
+            if not isinstance(home, dict):
+                home_ref = self.pick(item, "home_team_id", "homeTeamId", "home_id", "home_team_slug", "homeTeamSlug")
+                home = {"name": home, "id": home_ref} if home_ref else home
+            if not isinstance(away, dict):
+                away_ref = self.pick(item, "away_team_id", "awayTeamId", "away_id", "away_team_slug", "awayTeamSlug")
+                away = {"name": away, "id": away_ref} if away_ref else away
+            home_name = side_name(home, "Ev sahibi")
+            away_name = side_name(away, "Deplasman")
             if home_name == "Ev sahibi" or away_name == "Deplasman":
                 continue
             league_obj = self.pick(item, "competition", "league", "tournament", default={})
@@ -507,6 +531,10 @@ class FootballProvider:
                 "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
                 "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
                 "home": str(home_name), "away": str(away_name), "league": league,
+                "home_team_ref": self.team_reference(home),
+                "away_team_ref": self.team_reference(away),
+                "home_name_placeholder": self.is_placeholder_team_name(home_name),
+                "away_name_placeholder": self.is_placeholder_team_name(away_name),
                 "kickoff": self.local_kickoff(kickoff), "status": state,
                 "status_short": code or raw_status.upper()[:12],
                 "home_goals": score_int(hg), "away_goals": score_int(ag),
