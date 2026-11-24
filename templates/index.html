@@ -1,44 +1,5 @@
 {% extends "base.html" %}{% block title %}SRC ANALİZ · Maç Merkezi
-<script>
-/* Save Günün 10'lusu picks without navigating away or collapsing the disclosure. */
-(()=>{
- const root=document.getElementById("gunun-10lusu");
- if(!root)return;
- root.addEventListener("submit",async event=>{
-  const form=event.target.closest("form.js-daily-ten-save");
-  if(!form)return;
-  event.preventDefault();
-  const button=form.querySelector("button[type=submit]");
-  if(!button||button.disabled)return;
-  const original=button.textContent;
-  button.disabled=true;
-  button.textContent="Kaydediliyor…";
-  try{
-   const response=await fetch(form.action,{
-    method:"POST",
-    body:new FormData(form),
-    credentials:"same-origin",
-    headers:{"X-Requested-With":"XMLHttpRequest"}
-   });
-   if(!response.ok)throw new Error("HTTP "+response.status);
-   const saved=document.createElement("span");
-   saved.className="daily-ten-saved";
-   saved.setAttribute("role","status");
-   saved.textContent="✓ Eklendi";
-   form.replaceWith(saved);
-   root.open=true;
-  }catch(error){
-   button.disabled=false;
-   button.textContent=original;
-   const note=document.createElement("small");
-   note.className="daily-ten-save-error";
-   note.setAttribute("role","alert");
-   note.textContent="Kaydedilemedi. Tekrar deneyebilirsin.";
-   form.parentElement.appendChild(note);
-  }
- });
-})();
-</script>
+
 
 {% endblock %}{% block content %}
 <section class="dashboard-heading"><div><div class="eyebrow">SRC ANALİZ / MAÇ MERKEZİ</div><h1>Futbolun nabzı burada atıyor.</h1><p>Günün fikstürünü, canlı karşılaşmaları ve model performansını tek ekrandan takip et.</p></div><form class="date-picker-form" method="get"><label>Tarih</label><input type="date" name="date" value="{{day}}"><input type="hidden" name="view" value="{{view}}"><button class="button">Tarihi getir</button></form></section>
@@ -212,4 +173,44 @@
 })();
 </script>
 <script>(()=>{const cache=new Set();const load=el=>{const name=decodeURIComponent(el.dataset.teamName||"");if(!name||cache.has(name))return;cache.add(name);fetch("/api/team-logo?name="+encodeURIComponent(name),{cache:"force-cache"}).then(r=>r.ok?r.json():null).then(d=>{if(!d||!d.logo)return;document.querySelectorAll(".team-crest[data-team-name]").forEach(node=>{if(decodeURIComponent(node.dataset.teamName||"")!==name)return;const img=document.createElement("img");img.src=d.logo;img.alt=name+" arması";img.loading="lazy";img.onerror=()=>img.remove();node.replaceChildren(img)})}).catch(()=>{})};if("IntersectionObserver" in window){const observer=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){load(entry.target);observer.unobserve(entry.target)}}),{rootMargin:"120px"});document.querySelectorAll(".team-crest[data-team-name]").forEach(el=>observer.observe(el))}else document.querySelectorAll(".team-crest[data-team-name]").forEach(load)})();</script>
+<script>
+/* Save Günün 10'lusu picks without navigating away or collapsing the disclosure. */
+(()=>{
+ const root=document.getElementById("gunun-10lusu");
+ if(!root)return;
+ root.addEventListener("submit",async event=>{
+  const form=event.target.closest("form.js-daily-ten-save");
+  if(!form)return;
+  event.preventDefault();
+  const button=form.querySelector("button[type=submit]");
+  if(!button||button.disabled)return;
+  const original=button.textContent;
+  button.disabled=true;
+  button.textContent="Kaydediliyor…";
+  try{
+   const response=await fetch(form.action,{
+    method:"POST",
+    body:new FormData(form),
+    credentials:"same-origin",
+    headers:{"X-Requested-With":"XMLHttpRequest"}
+   });
+   if(!response.ok)throw new Error("HTTP "+response.status);
+   const saved=document.createElement("span");
+   saved.className="daily-ten-saved";
+   saved.setAttribute("role","status");
+   saved.textContent="✓ Eklendi";
+   form.replaceWith(saved);
+   root.open=true;
+  }catch(error){
+   button.disabled=false;
+   button.textContent=original;
+   const note=document.createElement("small");
+   note.className="daily-ten-save-error";
+   note.setAttribute("role","alert");
+   note.textContent="Kaydedilemedi. Tekrar deneyebilirsin.";
+   form.parentElement.appendChild(note);
+  }
+ });
+})();
+</script>
 {% endblock %}
