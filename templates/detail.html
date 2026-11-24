@@ -5,7 +5,7 @@
 <section class="panel"><h2>Maç bilgisi</h2><p><b>Durum:</b> {{ "Canlı" if m.status=="live" else "Tamamlandı" if m.status=="finished" else "Başlamadı" }}</p><p><b>Skor:</b> {{m.home_goals if m.home_goals is not none else "—"}} – {{m.away_goals if m.away_goals is not none else "—"}}</p>{% if m.status=="live" and m.elapsed_minute is not none %}<p><b>Dakika:</b> {{m.elapsed_minute}}'</p>{% endif %}{% if m.ht_home is not none or m.ht_away is not none %}<p><b>İlk yarı:</b> {{m.ht_home if m.ht_home is not none else "—"}} – {{m.ht_away if m.ht_away is not none else "—"}}</p>{% endif %}</section>
 
 {% if m.status in ("live", "finished") %}
-<section class="panel live-timeline" id="liveTimeline" data-match-id="{{m.id}}">
+<section class="panel live-timeline" id="liveTimeline" data-match-id="{{m.id}}" data-home-team="{{m.home|e}}" data-away-team="{{m.away|e}}">
  <div class="live-timeline-head"><div><span class="live-pulse"></span><b>{% if m.status == "live" %}CANLI MAÇ ANLATIMI{% else %}MAÇ OLAYLARI{% endif %}</b></div><strong id="liveMinute">{% if m.elapsed_minute is not none %}{{m.elapsed_minute}}' · Canlı{% elif m.status_short in ('HT','INT','BREAK','BT') %}Devre Arası{% else %}Canlı dakika bekleniyor{% endif %}</strong></div>
  <div class="live-score-strip"><span id="liveCurrentScore">{{m.home_goals if m.home_goals is not none else '—'}} – {{m.away_goals if m.away_goals is not none else '—'}}</span><span id="liveHalfScore">{% if m.ht_home is not none and m.ht_away is not none %}İlk yarı {{m.ht_home}} – {{m.ht_away}}{% else %}İlk yarı skoru bekleniyor{% endif %}</span></div>
  <div class="timeline-list" id="timelineEvents" aria-live="polite"><p class="muted timeline-empty">Canlı maç olayları yükleniyor…</p></div>
@@ -28,7 +28,12 @@
   if(!events.length){list.innerHTML='<p class="muted timeline-empty">Bu maç için henüz doğrulanmış olay kaydı bulunmuyor.</p>';return;}
   list.innerHTML=events.map(e=>{
    const state=e.event_status==="cancelled"?"event-cancelled":e.event_status==="reviewing"?"event-reviewing":"";
-   return '<article class="timeline-event '+state+'" data-kind="'+esc(e.kind)+'" data-side="'+esc(e.team||"")+'"><span class="timeline-minute">'+esc(e.minute_label)+'</span><span class="timeline-dot"></span><div class="timeline-copy"><b>'+esc(e.icon)+' '+esc(e.label)+'</b>'+(e.detail?'<small>'+esc(e.detail)+'</small>':'')+'</div></article>';
+   const side=e.team||e.team_side||"";
+   const teamName=e.team_name||(side==="home"?root.dataset.homeTeam:side==="away"?root.dataset.awayTeam:"");
+   const scorer=e.primary_player||e.player||"";
+   const assist=e.secondary_player||e.assist||"";
+   const people=[scorer,assist&&assist!==scorer?"Asist: "+assist:""].filter(Boolean).join(" · ");
+   return '<article class="timeline-event '+state+'" data-kind="'+esc(e.kind)+'" data-side="'+esc(side)+'"><span class="timeline-minute">'+esc(e.minute_label)+'</span><span class="timeline-dot"></span><div class="timeline-copy"><b>'+esc(e.icon)+' '+esc(e.label)+'</b>'+(teamName?'<small class="timeline-team">'+esc(teamName)+'</small>':'')+(people?'<small>'+esc(people)+'</small>':(e.kind==="goal"||e.kind==="own_goal"||e.kind==="penalty_scored"?'<small>Oyuncu bilgisi veri sağlayıcısında paylaşılmadı</small>':''))+(e.detail&&e.detail!==scorer?'<small>'+esc(e.detail)+'</small>':'')+'</div></article>';
   }).join("");
  }
  let timer=null,finished=false,busy=false;
