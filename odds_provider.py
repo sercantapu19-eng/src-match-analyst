@@ -129,6 +129,7 @@ class ApiFootballOddsProvider:
                         if odd <= 1 or odd > 10000:
                             continue
                         output.append({
+                            "fixture_id": str(((fixture.get("fixture") or {}).get("id") or "")),
                             "source": source,
                             "bookmaker_id": str(bookmaker_id or ""),
                             "bookmaker": bookmaker_name,
@@ -146,5 +147,6 @@ class ApiFootballOddsProvider:
     def pre_match_odds(self, fixture_id):
         return self.parse_odds(self._get("/odds", {"fixture": fixture_id}), "prematch")
 
-    def live_odds(self, fixture_id):
-        return self.parse_odds(self._get("/odds/live", {"fixture": fixture_id}), "live")
+    def live_odds(self, fixture_id=None):
+        params = {"fixture": fixture_id} if fixture_id else {}
+        return self.parse_odds(self._get("/odds/live", params), "live")
