@@ -371,10 +371,7 @@ class FootballProviderTests(unittest.TestCase):
 
     def test_match_slug_candidates_uses_team_slugs_and_name_fallback(self):
         provider = FootballProvider()
-        provider.search_team_slug = lambda name: {
-            "Shashemene Ketema": "shashemene-ketema",
-            "Bishoftu Ketema": "bishoftu-ketema"
-        }.get(name)
+        provider.search_team_slug = lambda name: self.fail("direct slug must not search team endpoints")
         self.assertEqual(
             provider.match_slug_candidates("Shashemene Ketema", "Bishoftu Ketema"),
             ["shashemene-ketema-vs-bishoftu-ketema"]
@@ -386,6 +383,17 @@ class FootballProviderTests(unittest.TestCase):
         self.assertEqual(
             provider.match_slug_candidates("Shashemene Ketema", "Bishoftu Ketema"),
             ["shashemene-ketema-vs-bishoftu-ketema"]
+        )
+
+    def test_verified_team_slug_candidate_is_a_secondary_fallback(self):
+        provider = FootballProvider()
+        provider.search_team_slug = lambda name: {
+            "Shashemene Ketema": "shashemene-ketema-ethiopia",
+            "Bishoftu Ketema": "bishoftu-ketema-ethiopia"
+        }.get(name)
+        self.assertEqual(
+            provider.team_slug_match_candidates("Shashemene Ketema", "Bishoftu Ketema"),
+            ["shashemene-ketema-ethiopia-vs-bishoftu-ketema-ethiopia"]
         )
 
     def test_match_detail_is_accepted_only_for_exact_home_away_pair(self):
