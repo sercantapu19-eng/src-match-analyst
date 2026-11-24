@@ -674,11 +674,17 @@ class FootballProvider:
 
     @staticmethod
     def parse_match_events(payload):
-        """Normalize the event timeline from SportScore's single-match response."""
-        keys = {"events", "timeline", "incidents", "match_events", "matchEvents"}
+        """Normalize SportScore match incidents without inventing missing event facts."""
+        import hashlib
+        import json
+        import re
+
+        keys = {"events", "timeline", "incidents", "match_events", "matchevents"}
         rows = []
+
         def walk(value, depth=0):
-            if depth > 6: return
+            if depth > 7:
+                return
             if isinstance(value, dict):
                 for key, child in value.items():
                     if str(key).casefold() in keys and isinstance(child, list):
@@ -687,51 +693,152 @@ class FootballProvider:
                         walk(child, depth + 1)
             elif isinstance(value, list):
                 for child in value:
-                    if isinstance(child, (dict, list)): walk(child, depth + 1)
+                    if isinstance(child, (dict, list)):
+                        walk(child, depth + 1)
+
         walk(payload)
         output, seen = [], set()
+
+        def person_name(value):
+            if isinstance(value, dict):
+                return str(FootballProvider.pick(value, "name", "display_name", "displayName", "short_name", default="") or "")
+            return str(value or "")
+
         for item in rows:
-            raw = str(FootballProvider.pick(item, "type", "event_type", "eventType", "incident", "kind", "name", "title", default="")).strip()
-            detail = str(FootballProvider.pick(item, "detail", "description", "comment", "label", "sub_type", "subType", default="")).strip()
-            value = (raw + " " + detail).casefold().replace("_", " ").replace("-", " ")
-            if "corner" in value or "korner" in value: kind,label,icon="corner","Korner","🚩"
-            elif "offside" in value or "ofsayt" in value: kind,label,icon="offside","Ofsayt","🚫"
-            elif any(x in value for x in ("substitution","substitute","oyuncu değiş")): kind,label,icon="substitution","Oyuncu değişikliği","🔄"
-            elif any(x in value for x in ("red card","red_card","kırmızı kart")): kind,label,icon="red_card","Kırmızı kart","🟥"
-            elif any(x in value for x in ("yellow","yellow_card","sarı kart")): kind,label,icon="yellow_card","Sarı kart","🟨"
-            elif any(x in value for x in ("var","cancelled","iptal")): kind,label,icon="var","VAR kararı","📺"
-            elif any(x in value for x in ("half time","halftime","devre arası")): kind,label,icon="halftime","İlk yarı sona erdi","⏸️"
-            elif any(x in value for x in ("second half","2nd half","ikinci yarı başladı")): kind,label,icon="second_half","İkinci yarı başladı","▶️"
-            elif any(x in value for x in ("full time","fulltime","maç sona erdi")): kind,label,icon="fulltime","Maç sona erdi","🏁"
-            elif any(x in value for x in ("first half","1st half","maç başladı")): kind,label,icon="kickoff","Maç başladı","🕐"
-            elif "goal" in value or "gol" in value or "penalty scored" in value: kind,label,icon="goal","Gol","⚽"
-            else: continue
-            raw_minute=FootballProvider.pick(item,"minute","time","elapsed","elapsed_minute","elapsedTime","time_elapsed","display",default="")
-            minute=FootballProvider.elapsed_minute({"elapsed":raw_minute}) if raw_minute not in (None,"") else ""
-            if minute is None: minute=raw_minute if isinstance(raw_minute,(int,float,str)) else ""
-            extra=FootballProvider.pick(item,"extra_minute","added_time","injury_time")
-            if extra not in (None,"",0,"0") and minute not in (None,"") and "+" not in str(minute): minute=f"{minute}+{extra}"
-            player=FootballProvider.pick(item,"player","player_name","playerName",default="")
-            if isinstance(player,dict): player=FootballProvider.pick(player,"name","display_name",default="")
-            assist=FootballProvider.pick(item,"assist","assist_player","assistName",default="")
-            if isinstance(assist,dict): assist=FootballProvider.pick(assist,"name",default="")
-            team=FootballProvider.pick(item,"team","team_name","teamName",default="")
-            if isinstance(team,dict): team=FootballProvider.pick(team,"name","short_name",default="")
-            incoming=FootballProvider.pick(item,"player_in","playerIn","in_player","sub_in",default="")
-            outgoing=FootballProvider.pick(item,"player_out","playerOut","out_player","sub_out",default="")
-            if isinstance(incoming,dict): incoming=FootballProvider.pick(incoming,"name",default="")
-            if isinstance(outgoing,dict): outgoing=FootballProvider.pick(outgoing,"name",default="")
-            if kind=="substitution" and (incoming or outgoing): detail=f"↓ {outgoing}  ↑ {incoming}".strip()
-            elif player: detail=str(player)+(f" · Asist: {assist}" if assist else "")
-            identity=(str(minute),kind,str(player),str(team),str(detail))
-            if identity in seen: continue
-            seen.add(identity)
-            output.append({"minute":str(minute),"minute_label":f"{minute}'" if minute not in (None,"") else "—",
-                "kind":kind,"label":label,"icon":icon,"detail":detail,"team":str(team or "")})
-        def order(event):
-            base=str(event["minute"]).split("+",1)[0]
-            return (int(base) if base.isdigit() else 999, 1 if "+" in str(event["minute"]) else 0)
-        return sorted(output,key=order)
+            raw_type = str(FootballProvider.pick(
+                item, "type", "event_type", "eventType", "incident", "kind", "name", "title",
+                "incident_type", "incidentType", default=""
+            )).strip()
+            detail = str(FootballProvider.pick(
+                item, "detail", "description", "comment", "label", "sub_type", "subType",
+                "reason", "outcome", default=""
+            )).strip()
+            value = (raw_type + " " + detail).casefold().replace("_", " ").replace("-", " ")
+            compact = re.sub(r"[^a-z0-9ğüşöçıİ]+", " ", value).strip()
+
+            if "corner" in compact or "korner" in compact:
+                kind, label, icon = "corner", "Korner", "🚩"
+            elif "offside" in compact or "ofsayt" in compact:
+                kind, label, icon = "offside", "Ofsayt", "🚫"
+            elif any(x in compact for x in ("substitution", "substitute", "oyuncu değiş")):
+                kind, label, icon = "substitution", "Oyuncu değişikliği", "🔄"
+            elif any(x in compact for x in ("red card", "redcard", "kırmızı kart")):
+                kind, label, icon = "red_card", "Kırmızı kart", "🟥"
+            elif any(x in compact for x in ("second yellow", "second_yellow", "ikinci sarı")):
+                kind, label, icon = "second_yellow", "İkinci sarı kart", "🟨🟥"
+            elif any(x in compact for x in ("yellow", "sarı kart")):
+                kind, label, icon = "yellow_card", "Sarı kart", "🟨"
+            elif any(x in compact for x in ("var", "cancelled", "canceled", "disallowed", "iptal")):
+                cancelled = any(x in compact for x in ("cancel", "canceled", "cancelled", "disallowed", "iptal", "overturned"))
+                kind, label, icon = ("goal_cancelled", "Gol VAR ile iptal edildi", "📺") if cancelled else ("var_review", "VAR incelemesi", "📺")
+            elif any(x in compact for x in ("penalty missed", "missed penalty", "penalty saved", "kaçan penaltı", "kaçırılan penaltı")):
+                kind, label, icon = "penalty_missed", "Kaçırılan penaltı", "❌"
+            elif any(x in compact for x in ("own goal", "autogol", "kendi kalesine")):
+                kind, label, icon = "own_goal", "Kendi kalesine gol", "⚽"
+            elif "penalty" in compact and any(x in compact for x in ("scored", "goal", "converted", "gol")):
+                kind, label, icon = "penalty_scored", "Penaltı golü", "⚽"
+            elif any(x in compact for x in ("half time", "halftime", "devre arası")):
+                kind, label, icon = "halftime", "İlk yarı sona erdi", "⏸️"
+            elif any(x in compact for x in ("second half", "2nd half", "ikinci yarı başladı")):
+                kind, label, icon = "second_half", "İkinci yarı başladı", "▶️"
+            elif any(x in compact for x in ("full time", "fulltime", "maç sona erdi")):
+                kind, label, icon = "fulltime", "Maç sona erdi", "🏁"
+            elif any(x in compact for x in ("first half", "1st half", "maç başladı")):
+                kind, label, icon = "kickoff", "Maç başladı", "🕐"
+            elif "goal" in compact or "gol" in compact:
+                kind, label, icon = "goal", "Gol", "⚽"
+            else:
+                continue
+
+            raw_minute = FootballProvider.pick(
+                item, "minute", "time", "elapsed", "elapsed_minute", "elapsedTime",
+                "time_elapsed", "display", "minute_label", default=""
+            )
+            minute_value = FootballProvider.elapsed_minute({"elapsed": raw_minute}) if raw_minute not in (None, "") else ""
+            if minute_value is None:
+                minute_value = str(raw_minute) if isinstance(raw_minute, (int, float, str)) else ""
+            minute_text = str(minute_value or "").strip()
+            base_minute, extra_minute = None, None
+            minute_match = re.fullmatch(r"(\d{1,3})(?:\s*\+\s*(\d{1,2}))?", minute_text)
+            if minute_match:
+                base_minute = int(minute_match.group(1))
+                extra_minute = int(minute_match.group(2)) if minute_match.group(2) else None
+            extra = FootballProvider.pick(item, "extra_minute", "added_time", "injury_time", "stoppage_time")
+            if extra not in (None, "", 0, "0"):
+                try:
+                    extra_minute = int(extra)
+                except (TypeError, ValueError):
+                    pass
+            if base_minute is not None and extra_minute is not None:
+                minute_text = f"{base_minute}+{extra_minute}"
+            elif base_minute is not None:
+                minute_text = str(base_minute)
+
+            player = person_name(FootballProvider.pick(item, "player", "player_name", "playerName", "scorer", "athlete", default=""))
+            assist = person_name(FootballProvider.pick(item, "assist", "assist_player", "assistName", "assisted_by", default=""))
+            team_value = FootballProvider.pick(item, "team", "team_name", "teamName", "team_side", "side", default="")
+            team = person_name(team_value)
+            incoming = person_name(FootballProvider.pick(item, "player_in", "playerIn", "in_player", "sub_in", "incoming_player", default=""))
+            outgoing = person_name(FootballProvider.pick(item, "player_out", "playerOut", "out_player", "sub_out", "outgoing_player", default=""))
+            if kind == "substitution":
+                detail_text = "Çıkan: " + (outgoing or "Bilinmiyor") + " · Giren: " + (incoming or "Bilinmiyor")
+            elif kind in ("var_review", "goal_cancelled"):
+                detail_text = detail or player
+            else:
+                detail_text = player + (f" · Asist: {assist}" if assist else "") if player else detail
+
+            provider_id = FootballProvider.pick(
+                item, "id", "event_id", "eventId", "incident_id", "incidentId", "uuid", "uid"
+            )
+            related_id = FootballProvider.pick(
+                item, "related_event_id", "relatedEventId", "parent_event_id", "parentEventId",
+                "goal_event_id", "goalEventId"
+            )
+            event_status = "cancelled" if kind == "goal_cancelled" else "reviewing" if kind == "var_review" else "confirmed"
+            team_side = str(FootballProvider.pick(item, "team_side", "side", default="") or "").casefold()
+            if team_side not in ("home", "away"):
+                team_side = ""
+            canonical = {
+                "kind": kind, "minute": minute_text, "team": team, "player": player,
+                "incoming": incoming, "outgoing": outgoing, "detail": detail_text,
+            }
+            if provider_id not in (None, ""):
+                event_uid = "sportscore:" + str(provider_id).strip()
+            else:
+                fingerprint = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                event_uid = "fallback:" + hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:40]
+            if event_uid in seen:
+                continue
+            seen.add(event_uid)
+            sort_key = (base_minute * 100 + (extra_minute or 0)) if base_minute is not None else 999999
+            counts_for_score = kind in ("goal", "own_goal", "penalty_scored") and event_status == "confirmed"
+            raw_meta = {
+                "provider_id": str(provider_id) if provider_id not in (None, "") else None,
+                "related_event_id": str(related_id) if related_id not in (None, "") else None,
+                "raw_type": raw_type,
+                "raw_detail": detail,
+            }
+            output.append({
+                "event_uid": event_uid,
+                "related_event_uid": "sportscore:" + str(related_id).strip() if related_id not in (None, "") else "",
+                "event_status": event_status,
+                "minute": minute_text,
+                "extra_minute": extra_minute,
+                "sort_key": sort_key,
+                "minute_label": f"{minute_text}′" if minute_text else "—",
+                "kind": kind,
+                "label": label,
+                "icon": icon,
+                "detail": detail_text,
+                "team": team,
+                "team_side": team_side,
+                "primary_player": player or incoming,
+                "secondary_player": assist or outgoing,
+                "counts_for_score": counts_for_score,
+                "raw_meta": raw_meta,
+            })
+
+        return sorted(output, key=lambda event: (event["sort_key"], event["event_uid"]))
 
     def match_detail(self, slug):
         """Fetch one match's details and official event timeline."""
