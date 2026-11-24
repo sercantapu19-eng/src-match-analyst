@@ -197,3 +197,22 @@ label,.muted,small{color:var(--muted)}
 .src-fixtures .fixture-date{display:block;font-size:12px;font-weight:750;line-height:1.25;color:var(--text)}
 .src-fixtures .fixture-hour{display:block;margin-top:4px;font-size:11px;font-weight:650;line-height:1.2;color:var(--muted)}
 @media(max-width:700px){.src-fixtures td.fixture-time{display:block;min-width:0}.src-fixtures .fixture-date{font-size:11px}.src-fixtures .fixture-hour{display:block;margin-top:3px;font-size:10px}}
+
+.daily-ten-panel{margin:0 0 22px}
+.daily-ten-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:14px}
+.daily-ten-heading h2,.daily-ten-empty h2{margin:5px 0}
+.daily-ten-heading p,.daily-ten-empty p{margin:6px 0 0;color:var(--muted);font-size:12px}
+.daily-ten-heading>strong{flex:0 0 auto;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2);font:800 18px Manrope}
+.daily-ten-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.daily-ten-pick{min-width:0;padding:12px;border:1px solid var(--line);border-radius:11px;background:var(--surface2)}
+.daily-ten-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px}
+.daily-ten-top b{font-size:11px;color:var(--muted)}
+.daily-ten-top strong{color:var(--accent);font:800 15px Manrope}
+.daily-ten-fixture{display:block;color:var(--text);font-size:13px;font-weight:800;text-decoration:none}
+.daily-ten-fixture:hover{color:var(--accent)}
+.daily-ten-selection{display:inline-flex;margin:8px 0 7px;padding:5px 9px;border-radius:7px;background:var(--surface3);font-size:12px;font-weight:800}
+.daily-ten-pick>small,.daily-ten-disclaimer{display:block;color:var(--muted);font-size:10px;line-height:1.5}
+.daily-ten-disclaimer{margin-top:12px}
+.daily-ten-empty{margin:0 0 22px}
+.daily-ten-empty>strong{display:inline-block;margin-top:8px;color:var(--accent);font-size:13px}
+@media(max-width:700px){.daily-ten-grid{grid-template-columns:1fr}.daily-ten-heading{align-items:flex-start}.daily-ten-heading>strong{font-size:15px;padding:8px 10px}}
