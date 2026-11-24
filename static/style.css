@@ -147,3 +147,11 @@ footer a{color:var(--src-blue)}
  .table-wrap table tr[data-match-id] td{font-size:13px}
  .table-wrap table tr[data-match-id] td:nth-child(2){font-size:15px}
 }
+
+/* Saved prediction settlement indicators */
+.prediction-result{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.result-won{display:inline-flex;align-items:center;gap:5px;color:#16834a;font-weight:800}
+.result-won span{display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#e5f6ec;color:#16834a;font-size:15px}
+.result-lost{display:inline-flex;align-items:center;gap:5px;color:#c62828;font-weight:800}
+.result-lost span{display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#fdeaea;color:#c62828;font-size:15px}
+.result-pending{color:#9a6700;font-weight:700}
