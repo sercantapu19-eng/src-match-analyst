@@ -475,6 +475,25 @@ class FootballProvider:
         return None
 
     @staticmethod
+    def match_slug_from_teams(home, away):
+        """Build SportScore's documented home-vs-away slug when fixture feeds omit IDs."""
+        import re
+        import unicodedata
+
+        def slug_part(value):
+            raw = str(value or "").strip().casefold().translate(str.maketrans({
+                "ı": "i", "ç": "c", "ğ": "g", "ö": "o", "ş": "s", "ü": "u"
+            }))
+            raw = unicodedata.normalize("NFKD", raw)
+            raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
+            return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", raw)).strip("-")
+
+        home_slug, away_slug = slug_part(home), slug_part(away)
+        if not home_slug or not away_slug:
+            return None
+        return f"{home_slug}-vs-{away_slug}"
+
+    @staticmethod
     def fixture_identity(item):
         """Extract match-only identifiers from flat or nested SportScore fixture rows."""
         import re
