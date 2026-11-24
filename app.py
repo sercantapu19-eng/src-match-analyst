@@ -491,7 +491,7 @@ def refresh_live_fixtures():
 
 @app.post("/sync/results/refresh")
 def refresh_results():
- """Scheduled, token-protected sync for live and recently finished fixtures."""
+ """Token-protected, date-scoped sync for fixtures and verified results."""
  token=os.environ.get("RESULT_SYNC_TOKEN","").strip()
  if not token:
   return jsonify({"error":"RESULT_SYNC_TOKEN yapılandırılmamış."}),503
@@ -500,102 +500,118 @@ def refresh_results():
   return jsonify({"error":"Yetkisiz."}),401
 
  today=datetime.now(ZoneInfo("Europe/Istanbul")).date()
- days=[(today-timedelta(days=offset)).isoformat() for offset in (2,1,0)]
+ requested_day=(request.args.get("date") or "").strip()
+ if requested_day:
+  try:
+   target_date=date.fromisoformat(requested_day)
+  except ValueError:
+   return jsonify({"error":"Tarih YYYY-MM-DD biçiminde olmalı."}),400
+  if target_date < today-timedelta(days=14) or target_date > today:
+   return jsonify({"error":"Senkronizasyon tarihi son 14 gün ile bugün arasında olmalı."}),400
+  days=[target_date.isoformat()]
+ else:
+  days=[(today-timedelta(days=offset)).isoformat() for offset in (2,1,0)]
+
  provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
  fetched=0
  matched=0
  finished=0
  evaluated=0
- try:
-  # Keep provider requests bounded: three date-scoped calls per scheduled run.
-  fixtures=[]
-  for target_day in days:
-   fixtures.extend(provider.fixtures(target_day))
-  fetched=len(fixtures)
-  upcoming_added=0
-  upcoming_ready=0
-  def key(value):
-   return " ".join(sorted(provider._normalize_search_name(value).split()))
-  with db() as c:
-   # Import today's scheduled fixtures too; otherwise an empty bulletin stays
-   # empty because the former job only updated existing live/finished rows.
-   for fixture in fixtures:
-    state=fixture.get("status")
-    kickoff_day=str(fixture.get("kickoff") or "")[:10]
-    if state!="scheduled" or not kickoff_day or kickoff_day < today.isoformat():
-     continue
-    candidates=c.execute("""SELECT * FROM matches
-      WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live')
-      ORDER BY id""",(kickoff_day,)).fetchall()
-    home_key,away_key=key(fixture.get("home")),key(fixture.get("away"))
-    row=next((item for item in candidates
-      if key(item["home"])==home_key and key(item["away"])==away_key),None)
-    if row:
-     mid=row["id"]
-    else:
-     mid=upsert_fixture_record(c,fixture)
-     upcoming_added+=1
-    if mid:
-     current=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
-     if current and current["status"]=="scheduled":
-      # Keep this scheduled score/fixture sync bounded. Prediction generation
-      # scans the full historical corpus and can exceed the web worker timeout.
-      # Newly imported fixtures remain visible; prediction batches run separately.
-      upcoming_ready+=1
+ upcoming_added=0
+ upcoming_ready=0
 
-   for fixture in fixtures:
-    state=fixture.get("status")
-    if state not in ("live","finished"):
-     continue
-    if state=="finished" and (fixture.get("home_goals") is None or fixture.get("away_goals") is None):
-     continue
-    kickoff_day=str(fixture.get("kickoff") or "")[:10]
-    if not kickoff_day:
-     continue
+ def key(value):
+  return " ".join(sorted(provider._normalize_search_name(value).split()))
+
+ try:
+  # Process and commit one day at a time. The scheduled GitHub workflow calls
+  # this endpoint once per day to stay well below the web worker timeout.
+  for target_day in days:
+   fixtures=provider.fixtures(target_day)
+   fetched+=len(fixtures)
+   with db() as c:
     candidates=c.execute("""SELECT * FROM matches
       WHERE substr(kickoff,1,10)=? AND status IN ('scheduled','live')
-      ORDER BY id""",(kickoff_day,)).fetchall()
-    home_key,away_key=key(fixture.get("home")),key(fixture.get("away"))
-    row=next((item for item in candidates
-      if key(item["home"])==home_key and key(item["away"])==away_key),None)
-    if not row:
-     # Import provider-confirmed live/finished fixtures absent from local DB.
-     mid=upsert_fixture_record(c,fixture)
-     row=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone() if mid else None
+      ORDER BY id""",(target_day,)).fetchall()
+    candidate_by_pair={
+     (key(row["home"]),key(row["away"])):row
+     for row in candidates
+    }
+
+    for fixture in fixtures:
+     state=fixture.get("status")
+     kickoff_day=str(fixture.get("kickoff") or "")[:10]
+     if not kickoff_day or kickoff_day!=target_day:
+      continue
+     pair=(key(fixture.get("home")),key(fixture.get("away")))
+     row=candidate_by_pair.get(pair)
+
+     if state=="scheduled":
+      if kickoff_day < today.isoformat():
+       continue
+      if row:
+       mid=row["id"]
+      else:
+       mid=upsert_fixture_record(c,fixture)
+       row=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone() if mid else None
+       if row:
+        candidate_by_pair[pair]=row
+        upcoming_added+=1
+      if row and row["status"]=="scheduled":
+       upcoming_ready+=1
+      continue
+
+     if state not in ("live","finished"):
+      continue
+     if state=="finished" and (fixture.get("home_goals") is None or fixture.get("away_goals") is None):
+      continue
+
      if not row:
+      # Import provider-confirmed live/finished fixtures absent from local DB.
+      mid=upsert_fixture_record(c,fixture)
+      row=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone() if mid else None
+      if not row:
+       continue
+      candidate_by_pair[pair]=row
+     mid=row["id"]
+     c.execute("""UPDATE matches SET status=?,status_short=?,
+       home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals),
+       ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away),
+       elapsed_minute=CASE WHEN ?='finished' THEN NULL ELSE COALESCE(?,elapsed_minute) END
+       WHERE id=?""",
+       (state,fixture.get("status_short") or ("FT" if state=="finished" else "LIVE"),
+        fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),fixture.get("ht_away"),
+        state,fixture.get("elapsed_minute"),mid))
+     matched+=1
+     if state!="finished":
       continue
-    mid=row["id"]
-    c.execute("""UPDATE matches SET status=?,status_short=?,
-      home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals),
-      ht_home=COALESCE(?,ht_home),ht_away=COALESCE(?,ht_away),
-      elapsed_minute=CASE WHEN ?='finished' THEN NULL ELSE COALESCE(?,elapsed_minute) END
-      WHERE id=?""",
-      (state,fixture.get("status_short") or ("FT" if state=="finished" else "LIVE"),
-       fixture.get("home_goals"),fixture.get("away_goals"),fixture.get("ht_home"),fixture.get("ht_away"),
-       state,fixture.get("elapsed_minute"),mid))
-    matched+=1
-    if state!="finished":
-     continue
-    finished+=1
-    sync_prediction_rows(c,mid)
-    current=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
-    actuals=actual_market_values(dict(current))
-    for market,actual in actuals.items():
-     if actual is None:
-      continue
-     label=dict(MARKETS).get(market)
-     if not label:
-      continue
-     result_row=c.execute("SELECT prediction FROM results WHERE match_id=? AND market=?",(mid,label)).fetchone()
-     if not result_row or not result_row["prediction"]:
-      continue
-     outcome=evaluate_prediction(result_row["prediction"],actual)
-     c.execute("UPDATE results SET actual=?,outcome=? WHERE match_id=? AND market=?",
-      (actual,outcome,mid,label))
-     evaluated+=1
-   c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
-    ("sportscore",today.isoformat(),datetime.utcnow().isoformat(),fetched,"success",
-     f"Günlük fikstür ve sonuç senkronizasyonu: {fetched} sağlayıcı maçı, {upcoming_added} yeni bugünkü maç, {upcoming_ready} yaklaşan maç hazırlandı, {matched} canlı/biten eşleşme, {finished} biten maç, {evaluated} pazar sonuçlandırıldı."))
+
+     finished+=1
+     sync_prediction_rows(c,mid)
+     current=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone()
+     actuals=actual_market_values(dict(current))
+     actual_by_label={
+      label:actuals[market]
+      for market,label in MARKETS
+      if market in actuals
+     }
+     result_rows=c.execute(
+      "SELECT market,prediction FROM results WHERE match_id=?",(mid,)
+     ).fetchall()
+     for result_row in result_rows:
+      actual=actual_by_label.get(result_row["market"])
+      prediction=result_row["prediction"]
+      if actual is None or not prediction:
+       continue
+      outcome=evaluate_prediction(prediction,actual)
+      c.execute("UPDATE results SET actual=?,outcome=? WHERE match_id=? AND market=?",
+       (actual,outcome,mid,result_row["market"]))
+      evaluated+=1
+
+    c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
+     ("sportscore",target_day,datetime.utcnow().isoformat(),len(fixtures),"success",
+      f"{target_day} senkronizasyonu: {len(fixtures)} sağlayıcı maçı, {upcoming_added} yeni yaklaşan maç, {upcoming_ready} yaklaşan maç, {matched} canlı/biten eşleşme, {finished} biten maç, {evaluated} pazar sonucu."))
+
   return jsonify({"ok":True,"days":days,"fetched":fetched,"upcoming_added":upcoming_added,
    "upcoming_ready":upcoming_ready,"matched":matched,"finished":finished,"evaluated_markets":evaluated,
    "updated_at":datetime.now(ZoneInfo("Europe/Istanbul")).isoformat()})
@@ -603,7 +619,7 @@ def refresh_results():
   app.logger.warning("Result sync provider error: %s",exc)
   with db() as c:
    c.execute("INSERT INTO sync_log(provider,day,ran_at,status,message) VALUES(?,?,?,?,?)",
-    ("sportscore",today.isoformat(),datetime.utcnow().isoformat(),"error",str(exc)))
+    ("sportscore",requested_day or today.isoformat(),datetime.utcnow().isoformat(),"error",str(exc)))
   return jsonify({"error":str(exc)}),502
  except Exception as exc:
   app.logger.exception("Result sync failed")

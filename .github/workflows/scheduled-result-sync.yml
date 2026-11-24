@@ -19,7 +19,7 @@ concurrency:
 jobs:
   sync-results:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 8
     steps:
       - name: Validate sync configuration
         env:
@@ -29,13 +29,21 @@ jobs:
             echo "::error::GitHub Actions secret RESULT_SYNC_TOKEN is not configured."
             exit 1
           fi
-      - name: Refresh live scores and finished results
+      - name: Refresh recent results and today's fixtures in daily batches
         env:
           SYNC_TOKEN: ${{ secrets.RESULT_SYNC_TOKEN }}
         run: |
-          curl --fail-with-body --silent --show-error \
-            --retry 2 --retry-delay 5 --max-time 90 \
-            -X POST "https://src-match-analyst.onrender.com/sync/results/refresh" \
-            -H "Authorization: Bearer $SYNC_TOKEN" \
-            -H "Content-Type: application/json" \
-            --data '{}'
+          TODAY="$(TZ=Europe/Istanbul date +%F)"
+          YESTERDAY="$(TZ=Europe/Istanbul date -d '1 day ago' +%F)"
+          TWO_DAYS_AGO="$(TZ=Europe/Istanbul date -d '2 days ago' +%F)"
+
+          for DAY in "$TWO_DAYS_AGO" "$YESTERDAY" "$TODAY"; do
+            echo "Refreshing fixtures and results for $DAY"
+            curl --fail-with-body --silent --show-error \
+              --retry 1 --retry-delay 3 --max-time 25 \
+              -X POST "https://src-match-analyst.onrender.com/sync/results/refresh?date=$DAY" \
+              -H "Authorization: Bearer $SYNC_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data '{}'
+            echo
+          done
