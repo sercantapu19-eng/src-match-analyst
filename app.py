@@ -701,7 +701,7 @@ def refresh_missing_predictions():
     continue
    has_prediction=bool(match.get("market_probabilities") and match["market_probabilities"]!="{}")
    has_market=any(match.get(key) for key in ("match_result","htft","over25","btts","first_half_btts","second_half_btts"))
-   if kickoff>=now_local and not has_prediction and not has_market:
+   if kickoff>=now_local and not has_prediction and not has_market and not match.get("prediction_message"):
     eligible.append(match)
 
   batch=eligible[:limit]
