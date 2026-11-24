@@ -558,7 +558,11 @@ def refresh_results():
     row=next((item for item in candidates
       if key(item["home"])==home_key and key(item["away"])==away_key),None)
     if not row:
-     continue
+     # Import provider-confirmed live/finished fixtures absent from local DB.
+     mid=upsert_fixture_record(c,fixture)
+     row=c.execute("SELECT * FROM matches WHERE id=?",(mid,)).fetchone() if mid else None
+     if not row:
+      continue
     mid=row["id"]
     c.execute("""UPDATE matches SET status=?,status_short=?,
       home_goals=COALESCE(?,home_goals),away_goals=COALESCE(?,away_goals),
