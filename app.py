@@ -564,6 +564,9 @@ def index():
     AND datetime(kickoff)>=datetime('now')
    ORDER BY kickoff,id""",(day,)).fetchall()
   daily_picks,daily_match_count=_daily_top_ten(daily_candidate_rows)
+  saved_daily_ids={row["match_id"] for row in c.execute("SELECT match_id FROM user_saved_matches WHERE user_id=?",(uid,)).fetchall()} if uid else set()
+  for pick in daily_picks:
+   pick["saved"]=pick["id"] in saved_daily_ids
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
