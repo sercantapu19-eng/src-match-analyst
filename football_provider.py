@@ -28,18 +28,25 @@ class FootballProvider:
 
     @staticmethod
     def elapsed_minute(item):
-        """Read the match clock from SportScore fixture and widget payload variants."""
+        """Read elapsed match time from SportScore fixture/widget payload variants."""
         import re
 
         def normalize(value):
             if isinstance(value, dict):
                 minute = FootballProvider.pick(
-                    value, "elapsed", "elapsed_minute", "elapsed_minutes", "minute",
-                    "minutes", "value", "current", "timer", "clock"
+                    value, "elapsed", "elapsed_minute", "elapsed_minutes",
+                    "elapsed_time", "elapsedTime", "match_minute", "matchMinute",
+                    "minute", "minutes", "current_minute", "currentMinute",
+                    "match_time", "matchTime", "value", "current", "timer", "clock"
                 )
                 extra = FootballProvider.pick(value, "extra", "added", "injury_time", "stoppage")
                 if minute is None:
-                    return None
+                    # Widget feeds sometimes expose a display string instead of
+                    # a numeric elapsed field.
+                    minute = FootballProvider.pick(value, "display", "display_time", "displayTime", "text", "label")
+                    if minute is None:
+                        return None
+                    return normalize(minute)
                 base = normalize(minute)
                 if base is None:
                     return None
@@ -51,15 +58,20 @@ class FootballProvider:
             text = value.strip()
             if not text:
                 return None
-            match = re.fullmatch(
-                r"(?:live|canli|minute|dakika)?\s*(\d{1,3})(?:\s*\+\s*(\d{1,2}))?\s*(?:['′’]|m|min|mins|minute|minutes)?",
-                text, flags=re.IGNORECASE
+            # Accept labels such as "Live 37'", "1st Half · 37:18",
+            # "45+2" and "37 min", while requiring an explicit time marker.
+            patterns = (
+                r"(?:live|in[ -]?play|1st\s+half|first\s+half|2nd\s+half|second\s+half|minute|dakika)[^0-9]{0,12}(\d{1,3})(?:\s*\+\s*(\d{1,2}))?\s*(?:['′’]|m|min|mins|minute|minutes)?",
+                r"(?<!\d)(\d{1,3})\s*\+\s*(\d{1,2})(?!\d)",
+                r"^(\d{1,3})\s*(?:['′’]|m|min|mins|minute|minutes)$",
+                r"^(\d{1,3}):(\d{2})$"
             )
-            if match:
-                return f"{match.group(1)}+{match.group(2)}" if match.group(2) else int(match.group(1))
-            clock = re.fullmatch(r"(\d{1,3}):(\d{2})", text)
-            if clock:
-                return int(clock.group(1))
+            for index, pattern in enumerate(patterns):
+                match = re.search(pattern, text, flags=re.IGNORECASE)
+                if match:
+                    if index in (0, 1) and match.group(2):
+                        return f"{match.group(1)}+{match.group(2)}"
+                    return int(match.group(1))
             return None
 
         status = item.get("status") if isinstance(item.get("status"), dict) else {}
@@ -67,22 +79,33 @@ class FootballProvider:
         timer_obj = item.get("timer") if isinstance(item.get("timer"), dict) else {}
         candidates = [
             item.get(key) for key in (
-                "elapsed", "elapsed_minute", "elapsed_minutes", "minute",
-                "match_minute", "elapsed_time", "timer", "clock", "time_elapsed"
+                "elapsed", "elapsed_minute", "elapsed_minutes", "elapsed_time",
+                "elapsedTime", "minute", "minutes", "match_minute", "matchMinute",
+                "match_time", "matchTime", "current_minute", "currentMinute",
+                "timer", "clock", "time_elapsed", "timeElapsed", "status_text",
+                "time_text", "minute_text", "display_time", "displayTime"
             )
         ]
-        candidates.extend([
-            time_obj.get(key) for key in ("elapsed", "elapsed_minute", "elapsed_minutes", "minute", "timer", "clock")
-        ])
-        candidates.extend([
-            status.get(key) for key in ("elapsed", "elapsed_minute", "elapsed_minutes", "minute", "timer", "clock")
-        ])
-        candidates.extend([
-            timer_obj.get(key) for key in ("elapsed", "minute", "minutes", "value", "current")
-        ])
-        # SportScore can publish the match clock as status_text (e.g. "37'"
-        # or "45+2") while the primary status remains simply "live".
-        candidates.extend([item.get("status_text"), item.get("time_text"), item.get("minute_text")])
+        candidates.extend(
+            time_obj.get(key) for key in (
+                "elapsed", "elapsed_minute", "elapsed_minutes", "minute",
+                "minutes", "timer", "clock", "match_time", "matchTime",
+                "display", "text"
+            )
+        )
+        candidates.extend(
+            status.get(key) for key in (
+                "elapsed", "elapsed_minute", "elapsed_minutes", "minute",
+                "minutes", "timer", "clock", "elapsed_time", "elapsedTime",
+                "match_time", "matchTime", "status_text", "text", "label"
+            )
+        )
+        candidates.extend(
+            timer_obj.get(key) for key in (
+                "elapsed", "minute", "minutes", "value", "current",
+                "display", "text", "clock"
+            )
+        )
         for candidate in candidates:
             value = normalize(candidate)
             if value is not None:
