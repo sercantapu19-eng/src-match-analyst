@@ -389,6 +389,11 @@ def _store_match_events(match_id, events, home, away):
    if related and event.get("kind")=="goal_cancelled":
     c.execute("""UPDATE match_events SET event_status='cancelled',counts_for_score=FALSE,updated_at=?
      WHERE match_id=? AND event_uid=?""",(now,match_id,related))
+  # Also apply a cancellation that arrived before its referenced goal in an earlier poll.
+  c.execute("""UPDATE match_events SET event_status='cancelled',counts_for_score=FALSE,updated_at=?
+   WHERE match_id=? AND event_uid IN (
+    SELECT related_event_uid FROM match_events
+    WHERE match_id=? AND event_type='goal_cancelled' AND related_event_uid<>'')""",(now,match_id,match_id))
 
 
 def _claim_match_event_refresh(match_id, provider_slug):
