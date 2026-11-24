@@ -123,6 +123,26 @@ class LiveEventCacheRouteTests(unittest.TestCase):
             ).fetchone()["count"]
         self.assertEqual(stored, 1)
 
+    def test_duplicate_event_upsert_and_explicit_var_cancellation_preserve_history(self):
+        events = FootballProvider.parse_match_events({
+            "events": [
+                {"id": "goal-1", "type": "goal", "minute": 22, "player": "Scorer", "team": "Alpha FC"},
+                {"id": "var-1", "type": "var_goal_cancelled", "minute": 23,
+                 "related_event_id": "goal-1", "detail": "Ofsayt nedeniyle gol iptal edildi"},
+            ]
+        })
+        application._store_match_events(self.match_id, events, "Alpha FC", "Beta FC")
+        application._store_match_events(self.match_id, events, "Alpha FC", "Beta FC")
+        with application.db() as conn:
+            rows = conn.execute(
+                "SELECT event_uid,event_type,event_status,counts_for_score FROM match_events WHERE match_id=? ORDER BY event_type",
+                (self.match_id,),
+            ).fetchall()
+        self.assertEqual(len(rows), 2)
+        goal = next(row for row in rows if row["event_uid"] == "sportscore:goal-1")
+        self.assertEqual(goal["event_status"], "cancelled")
+        self.assertFalse(bool(goal["counts_for_score"]))
+
     def test_finished_match_keeps_saved_event_history_without_live_api_call(self):
         with application.db() as conn:
             conn.execute("UPDATE matches SET status='finished',status_short='FT' WHERE id=?",
