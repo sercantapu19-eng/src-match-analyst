@@ -733,6 +733,8 @@ class FootballProvider:
                 kind, label, icon = ("goal_cancelled", "Gol VAR ile iptal edildi", "📺") if cancelled else ("var_review", "VAR incelemesi", "📺")
             elif any(x in compact for x in ("penalty missed", "missed penalty", "penalty saved", "kaçan penaltı", "kaçırılan penaltı")):
                 kind, label, icon = "penalty_missed", "Kaçırılan penaltı", "❌"
+            elif "penalty" in compact and not any(x in compact for x in ("scored", "goal", "converted", "missed", "saved")):
+                kind, label, icon = "penalty_awarded", "Penaltı kararı", "⚽"
             elif any(x in compact for x in ("own goal", "autogol", "kendi kalesine")):
                 kind, label, icon = "own_goal", "Kendi kalesine gol", "⚽"
             elif "penalty" in compact and any(x in compact for x in ("scored", "goal", "converted", "gol")):
@@ -794,7 +796,7 @@ class FootballProvider:
                 item, "related_event_id", "relatedEventId", "parent_event_id", "parentEventId",
                 "goal_event_id", "goalEventId"
             )
-            event_status = "cancelled" if kind == "goal_cancelled" else "reviewing" if kind == "var_review" else "confirmed"
+            event_status = "reviewing" if kind == "var_review" else "confirmed"
             team_side = str(FootballProvider.pick(item, "team_side", "side", default="") or "").casefold()
             if team_side not in ("home", "away"):
                 team_side = ""
