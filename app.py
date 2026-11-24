@@ -15,6 +15,14 @@ if (os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production") and l
 app.secret_key=secret_key or secrets.token_urlsafe(48)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER") or os.environ.get("FLASK_ENV")=="production"))
 
+@app.after_request
+def cache_static_assets(response):
+ # Static CSS/JS/images are versioned by Flask's URL generation; cache them
+ # for one day in the browser while keeping personalized HTML uncached.
+ if request.endpoint == "static" and response.status_code == 200:
+  response.headers["Cache-Control"] = "public, max-age=86400"
+ return response
+
 def _is_placeholder_team_name(value):
  import re
  text=str(value or "").strip()
