@@ -723,6 +723,8 @@ class FootballProvider:
 
     def search_team_logo(self, team_name):
         """Return a verified exact-name club crest URL from SportScore search, if supplied."""
+        if self.is_placeholder_team_name(team_name):
+            return None
         try:
             response = self.session.get(
                 SEARCH_URL,
