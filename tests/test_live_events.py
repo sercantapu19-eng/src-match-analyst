@@ -187,6 +187,7 @@ class LiveEventCacheRouteTests(unittest.TestCase):
             team_schedule_calls = 0
             _normalize_search_name = staticmethod(FootballProvider._normalize_search_name)
             find_matching_live_fixture = staticmethod(FootballProvider.find_matching_live_fixture)
+            match_slug_from_teams = staticmethod(FootballProvider.match_slug_from_teams)
             parse_match_events = staticmethod(FootballProvider.parse_match_events)
 
             def __init__(self, api_key=None):
