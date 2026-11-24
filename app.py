@@ -400,7 +400,7 @@ def _claim_match_event_refresh(match_id, provider_slug):
   state=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(match_id,)).fetchone()
   if state and _is_cache_fresh(state["last_attempt_at"],MATCH_EVENT_CACHE_SECONDS,now_dt):
    return False,dict(state)
-  cursor=c.execute("""UPDATE match_live_state SET lease_until=?,provider_slug=COALESCE(NULLIF(?,''),provider_slug)
+  cursor=c.execute("""UPDATE match_live_state SET lease_until=?,last_attempt_at=?,provider_slug=COALESCE(NULLIF(?,''),provider_slug)
    WHERE match_id=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,now,provider_slug or "",match_id,now))
   state=c.execute("SELECT * FROM match_live_state WHERE match_id=?",(match_id,)).fetchone()
   return cursor.rowcount>0,dict(state) if state else {}
