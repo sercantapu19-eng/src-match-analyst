@@ -9,10 +9,11 @@
 {% if rows %}
 <div class="results-table-wrap">
   <table class="results-table">
-    <thead><tr><th>Maç</th><th>İY</th><th>MS</th></tr></thead>
+    <thead><tr><th>Tarih</th><th>Maç</th><th>İY</th><th>MS</th></tr></thead>
     <tbody>
       {% for r in rows %}
       <tr class="result-match-row">
+        <td class="result-date">{{r.date}}</td>
         <td class="result-match-cell">
           <details class="result-match">
             <summary>
@@ -56,7 +57,7 @@
 .result-market-table{width:100%;border-collapse:collapse;font-size:13px}
 .result-market-table th,.result-market-table td{padding:8px 7px;border-bottom:1px solid var(--border,#e5e7eb);white-space:normal}
 .result-market-table th{font-size:11px}
-.result-score{font-weight:600;white-space:nowrap}
+.result-score{font-weight:600;white-space:nowrap}\n.result-date{white-space:nowrap;color:var(--muted,#687386);font-size:13px}
 .result-outcome{font-weight:600;white-space:nowrap}
 @media(max-width:640px){.results-table th,.results-table td{padding:9px 6px}.result-match summary{min-width:190px;flex-wrap:wrap}.result-market-panel{padding-left:0}.result-market-table{font-size:12px}.result-market-table th,.result-market-table td{padding:7px 4px}}
 </style>

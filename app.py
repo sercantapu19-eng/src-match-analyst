@@ -1140,8 +1140,12 @@ def results():
  for row in rows:
   match_id=row["match_id"]
   if match_id not in grouped:
+   kickoff_date=str(row["kickoff"] or "")[:10]
+   date_label="—"
+   if len(kickoff_date)==10 and kickoff_date[4:5]=="-" and kickoff_date[7:8]=="-":
+    date_label=f"{kickoff_date[8:10]}.{kickoff_date[5:7]}.{kickoff_date[0:4]}"
    grouped[match_id]={
-    "home":row["home"],"away":row["away"],
+    "date":date_label,"home":row["home"],"away":row["away"],
     "ht_score":f"{row['ht_home']} – {row['ht_away']}" if row["ht_home"] is not None and row["ht_away"] is not None else "—",
     "ft_score":f"{row['home_goals']} – {row['away_goals']}" if row["home_goals"] is not None and row["away_goals"] is not None else "—",
     "markets":[]}
