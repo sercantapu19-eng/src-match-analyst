@@ -388,7 +388,7 @@ def _store_match_events(match_id, events, home, away):
    related=event.get("related_event_uid")
    if related and event.get("kind")=="goal_cancelled":
     c.execute("""UPDATE match_events SET event_status='cancelled',counts_for_score=FALSE,updated_at=?
-     WHERE match_id=? AND event_uid=? AND event_type IN ('goal','own_goal','penalty_scored')""",(now,match_id,related))
+     WHERE match_id=? AND event_uid=?""",(now,match_id,related))
 
 
 def _claim_match_event_refresh(match_id, provider_slug):
