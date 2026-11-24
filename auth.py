@@ -61,6 +61,15 @@ def init_auth_db():
                 match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
                 market_key TEXT NOT NULL, selection_key TEXT NOT NULL, saved_at TEXT NOT NULL,
                 UNIQUE(user_id, match_id, market_key, selection_key))""")
+            _execute(conn, """CREATE TABLE IF NOT EXISTS user_coupons (
+                id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', created_at TEXT NOT NULL, saved_at TEXT)""")
+            _execute(conn, """CREATE TABLE IF NOT EXISTS user_coupon_items (
+                id BIGSERIAL PRIMARY KEY, coupon_id BIGINT NOT NULL REFERENCES user_coupons(id) ON DELETE CASCADE,
+                match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                market_key TEXT NOT NULL, selection_key TEXT NOT NULL, created_at TEXT NOT NULL,
+                UNIQUE(coupon_id, match_id, market_key, selection_key))""")
+            _execute(conn, "CREATE INDEX IF NOT EXISTS idx_user_coupons_user_status ON user_coupons(user_id,status,created_at DESC)")
         else:
             _execute(conn, """CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE,
@@ -74,6 +83,15 @@ def init_auth_db():
                 match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
                 market_key TEXT NOT NULL, selection_key TEXT NOT NULL, saved_at TEXT NOT NULL,
                 UNIQUE(user_id, match_id, market_key, selection_key))""")
+            _execute(conn, """CREATE TABLE IF NOT EXISTS user_coupons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', created_at TEXT NOT NULL, saved_at TEXT)""")
+            _execute(conn, """CREATE TABLE IF NOT EXISTS user_coupon_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, coupon_id INTEGER NOT NULL REFERENCES user_coupons(id) ON DELETE CASCADE,
+                match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                market_key TEXT NOT NULL, selection_key TEXT NOT NULL, created_at TEXT NOT NULL,
+                UNIQUE(coupon_id, match_id, market_key, selection_key))""")
+            _execute(conn, "CREATE INDEX IF NOT EXISTS idx_user_coupons_user_status ON user_coupons(user_id,status,created_at)")
     _init_rate_limit_table()
 
 
