@@ -374,6 +374,9 @@ def index():
   success_rate=round((settled['won'] or 0)*100/settled['total']) if settled['total'] else 0
   recent=c.execute("SELECT outcome FROM results WHERE outcome IN ('won','lost') ORDER BY id DESC LIMIT 10").fetchall()
   recent_count=len(recent); recent_wins=sum(1 for item in recent if item['outcome']=='won')
+  live_featured=c.execute("""SELECT id,home,away,league,kickoff,home_goals,away_goals,
+   ht_home,ht_away,elapsed_minute,status_short FROM matches
+   WHERE status='live' ORDER BY COALESCE(elapsed_minute,0) DESC,kickoff DESC LIMIT 1""").fetchone()
   upcoming=c.execute("""SELECT COUNT(*) FROM (
    SELECT ROW_NUMBER() OVER (
     PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id
@@ -398,7 +401,8 @@ def index():
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
   unverified_count=unverified,live_count=live_count,today_total=today_total,
-  success_rate=success_rate,recent_count=recent_count,recent_wins=recent_wins)
+  success_rate=success_rate,recent_count=recent_count,recent_wins=recent_wins,
+  live_featured=live_featured)
 
 @app.post("/sync/fixtures")
 @admin_required
