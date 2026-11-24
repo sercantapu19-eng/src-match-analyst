@@ -458,15 +458,18 @@ class FootballProvider:
 
     @staticmethod
     def find_matching_live_fixture(fixtures, home, away, kickoff=None):
-        """Return one unambiguous live fixture for the exact home/away pair."""
-        target_home = FootballProvider._normalize_search_name(home)
-        target_away = FootballProvider._normalize_search_name(away)
+        """Match a live fixture conservatively, tolerating provider club-name suffixes."""
+        def tokens(value):
+            return set(FootballProvider._normalize_search_name(value).split())
+        def same_team(left, right):
+            a, b = tokens(left), tokens(right)
+            return bool(a and b and (a == b or a.issubset(b) or b.issubset(a)))
         candidates = [
             fixture for fixture in (fixtures or [])
             if isinstance(fixture, dict) and fixture.get("status") == "live"
-            and FootballProvider._normalize_search_name(fixture.get("home", "")) == target_home
-            and FootballProvider._normalize_search_name(fixture.get("away", "")) == target_away
-            and fixture.get("id")
+            and same_team(fixture.get("home", ""), home)
+            and same_team(fixture.get("away", ""), away)
+            and (fixture.get("slug") or fixture.get("id"))
         ]
         if not candidates:
             return None

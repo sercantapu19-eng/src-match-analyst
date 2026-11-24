@@ -1055,12 +1055,24 @@ def match_live_data(mid):
   # The database external_id is an import identifier, not assumed to be a slug.
   live_fixtures=provider.live_matches()
   fixture=provider.find_matching_live_fixture(live_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
+  # Fallback to the date-scoped fixtures endpoint if the live widget omits this match.
+  if not fixture and match.get("kickoff"):
+   try:
+    match_day=datetime.fromisoformat(str(match["kickoff"]).replace("Z","+00:00")).date().isoformat()
+    daily_fixtures=provider.fixtures(match_day,status="live")
+    fixture=provider.find_matching_live_fixture(daily_fixtures,match.get("home"),match.get("away"),match.get("kickoff"))
+    app.logger.info("Live detail fallback match=%s widget_count=%s daily_count=%s matched=%s",
+     mid,len(live_fixtures),len(daily_fixtures),bool(fixture))
+   except (ValueError,TypeError) as date_error:
+    app.logger.warning("Live detail invalid kickoff match=%s: %s",mid,date_error)
   if not fixture:
+   app.logger.warning("Live detail fixture not matched: match_id=%s home=%r away=%r kickoff=%r widget_count=%s",
+    mid,match.get("home"),match.get("away"),match.get("kickoff"),len(live_fixtures))
    return jsonify({"status":"live","minute":match.get("elapsed_minute"),
     "minute_label":"Canlı dakika bekleniyor","score":(
      f"{match['home_goals']} – {match['away_goals']}" if match["home_goals"] is not None else None),
     "ht_score":None,"events":[],"events_available":False,
-    "message":"Bu karşılaşma canlı veri akışında tekil olarak eşleştirilemedi."})
+    "message":"Canlı veri sağlayıcısında bu maç henüz eşleştirilemedi."})
   provider_slug=fixture.get("slug") or fixture.get("id")
   payload=provider.match_detail(provider_slug)
   events=provider.parse_match_events(payload)

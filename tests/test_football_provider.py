@@ -320,5 +320,26 @@ class FootballProviderTests(unittest.TestCase):
         self.assertIsNone(FootballProvider.find_matching_live_fixture(
             fixtures, "Newcastle Jets", "Kashiwa Reysol"))
 
+    def test_live_fixture_match_tolerates_provider_club_suffixes(self):
+        fixtures = [{
+            "id":"chattogram-city-vs-brothers-union",
+            "slug":"chattogram-city-vs-brothers-union",
+            "home":"Chattogram City", "away":"Brothers Union Club",
+            "status":"live", "kickoff":"2026-11-24T10:30:00+06:00",
+            "elapsed_minute":32
+        }]
+        found = FootballProvider.find_matching_live_fixture(
+            fixtures, "Chattogram City FC", "Brothers Union",
+            "2026-11-24T10:30:00+06:00")
+        self.assertEqual(found["slug"], "chattogram-city-vs-brothers-union")
+
+    def test_live_fixture_match_does_not_match_different_token_names(self):
+        fixtures = [{
+            "id":"chattogram-vs-brothers", "home":"Chattogram Abahani",
+            "away":"Brothers Union", "status":"live"
+        }]
+        self.assertIsNone(FootballProvider.find_matching_live_fixture(
+            fixtures, "Chattogram City FC", "Brothers Union"))
+
 if __name__ == "__main__":
     unittest.main()
