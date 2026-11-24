@@ -27,7 +27,15 @@
                   {% for item in r.markets %}
                   <tr>
                     <td>{{item.market}}</td><td>{{item.prediction_display}}</td><td>{{item.actual_display}}</td>
-                    <td><span class="result-outcome {{item.outcome}}">{{"Kazandı" if item.outcome=="won" else "Kaybetti" if item.outcome=="lost" else "Bekliyor"}}</span></td>
+                    <td>
+                      {% if item.outcome=="won" %}
+                      <span class="result-outcome result-won"><span class="result-outcome-icon" aria-hidden="true">✓</span>Kazandı</span>
+                      {% elif item.outcome=="lost" %}
+                      <span class="result-outcome result-lost"><span class="result-outcome-icon" aria-hidden="true">×</span>Kaybetti</span>
+                      {% else %}
+                      <span class="result-outcome result-pending"><span class="result-outcome-icon" aria-hidden="true">…</span>Bekliyor</span>
+                      {% endif %}
+                    </td>
                   </tr>
                   {% endfor %}
                 </tbody>
