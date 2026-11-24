@@ -1165,6 +1165,19 @@ def saved():
  results_by_match={}
  for row in rows: results_by_match.setdefault(row["match_id"],[]).append(dict(row))
  return render_template("saved.html",matches=ms,results_by_match=results_by_match,selected_predictions=selected)
+def _goal_side_label(market, selection):
+ """Hide repeated goal-line value in selection labels on the results screen."""
+ market_key="".join(str(market or "").casefold().replace(",",".").split())
+ if market_key not in {"1.5gol","2.5gol","3.5gol","4.5gol"}:
+  return selection or "—"
+ value=str(selection or "").strip().casefold()
+ if value.startswith(("üst","over")):
+  return "Üst"
+ if value.startswith(("alt","under")):
+  return "Alt"
+ return selection or "—"
+
+
 @app.route("/results")
 def results():
  with db() as c:
@@ -1190,8 +1203,12 @@ def results():
     "ft_score":f"{row['home_goals']} – {row['away_goals']}" if row["home_goals"] is not None and row["away_goals"] is not None else "—",
     "markets":[]}
   grouped[match_id]["markets"].append({
-   "market":row["market"],"prediction":row["prediction"],
-   "actual":row["actual"],"outcome":row["outcome"]})
+   "market":row["market"],
+   "prediction":row["prediction"],
+   "actual":row["actual"],
+   "prediction_display":_goal_side_label(row["market"],row["prediction"]),
+   "actual_display":_goal_side_label(row["market"],row["actual"]),
+   "outcome":row["outcome"]})
  return render_template("results.html",rows=list(grouped.values()),won=won,lost=lost,
   pct=round(won*100/(won+lost)) if won+lost else 0)
 if __name__=="__main__":app.run(host="0.0.0.0",port=int(os.environ.get("PORT",5000)),debug=True)
