@@ -12,7 +12,14 @@
  <p>{{m.htft or "İY/MS tahmini yok"}} · {{m.over25 or "2,5 gol tahmini yok"}} · KG {{m.btts or "—"}} · Korner {{m.corners or "—"}}</p>
  {% set match_results = results_by_match.get(m.id, []) %}
  {% if match_results %}<div class="result-list"><strong>Tahmin sonuçları</strong>
- {% for r in match_results %}<p>{{r.market}}: {{r.prediction}} → {{r.actual or "Sonuç bekleniyor"}} · {% if r.outcome=="won" %}<strong>Kazandı</strong>{% elif r.outcome=="lost" %}<strong>Kaybetti</strong>{% else %}Bekliyor{% endif %}</p>{% endfor %}
+ {% for r in match_results %}
+ <p class="prediction-result">
+  {{r.market}}: {{r.prediction}} → {{r.actual or "Sonuç bekleniyor"}} ·
+  {% if r.outcome=="won" %}<span class="result-won"><span aria-hidden="true">✓</span> Kazandı</span>
+  {% elif r.outcome=="lost" %}<span class="result-lost"><span aria-hidden="true">✕</span> Kaybetti</span>
+  {% else %}<span class="result-pending">⏳ Bekliyor</span>{% endif %}
+ </p>
+ {% endfor %}
  </div>
  {% elif m.status=="finished" %}
  <div class="result-list"><strong>Tahmin değerlendirmesi yapılamadı</strong>
