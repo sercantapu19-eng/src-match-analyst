@@ -1911,11 +1911,13 @@ def match_live_data(mid):
  if state and _is_cache_fresh(state.get("last_attempt_at"),MATCH_EVENT_CACHE_SECONDS):
   period="finished" if match.get("status")=="finished" else _live_period(
    state.get("status") or match.get("status_short") or match.get("status"))
-  minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
-  home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
-  away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
-  ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
-  ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+  minute=match.get("elapsed_minute") if match.get("status")=="live" else None
+  if minute in (None,""): minute=state.get("minute")
+  # Synchronized fixture data is canonical; event cache may lag behind.
+  home_score=match.get("home_goals") if match.get("home_goals") is not None else state.get("home_score")
+  away_score=match.get("away_goals") if match.get("away_goals") is not None else state.get("away_score")
+  ht_home=match.get("ht_home") if match.get("ht_home") is not None else state.get("ht_home")
+  ht_away=match.get("ht_away") if match.get("ht_away") is not None else state.get("ht_away")
   return jsonify({
    "status":period,"minute":minute,"minute_label":_live_minute_label(period,minute),
    "score":f"{home_score} – {away_score}" if home_score is not None and away_score is not None else None,
@@ -2007,11 +2009,13 @@ def match_live_data(mid):
  else:
   provider_slug=str(state.get("provider_slug") or "")
   period="finished" if match.get("status")=="finished" else _live_period(state.get("status") or match.get("status_short"))
-  minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
-  home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
-  away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
-  ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
-  ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+  minute=match.get("elapsed_minute") if match.get("status")=="live" else None
+  if minute in (None,""): minute=state.get("minute")
+  # Synchronized fixture data is canonical; event cache may lag behind.
+  home_score=match.get("home_goals") if match.get("home_goals") is not None else state.get("home_score")
+  away_score=match.get("away_goals") if match.get("away_goals") is not None else state.get("away_score")
+  ht_home=match.get("ht_home") if match.get("ht_home") is not None else state.get("ht_home")
+  ht_away=match.get("ht_away") if match.get("ht_away") is not None else state.get("ht_away")
   # Finished matches may never have been opened while live. Recover their detail
   # slug from either team's schedule instead of requiring an old live-state slug.
   if not provider_slug and match.get("status")=="finished":
@@ -2057,11 +2061,13 @@ def match_live_data(mid):
   events=_load_match_event_rows(c,mid)
  if not fixture:
   period="finished" if match.get("status")=="finished" else _live_period(state.get("status") or match.get("status_short") or match.get("status"))
-  minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
-  home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
-  away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
-  ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
-  ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+  minute=match.get("elapsed_minute") if match.get("status")=="live" else None
+  if minute in (None,""): minute=state.get("minute")
+  # Synchronized fixture data is canonical; event cache may lag behind.
+  home_score=match.get("home_goals") if match.get("home_goals") is not None else state.get("home_score")
+  away_score=match.get("away_goals") if match.get("away_goals") is not None else state.get("away_score")
+  ht_home=match.get("ht_home") if match.get("ht_home") is not None else state.get("ht_home")
+  ht_away=match.get("ht_away") if match.get("ht_away") is not None else state.get("ht_away")
  score=f"{home_score} – {away_score}" if home_score is not None and away_score is not None else None
  ht_score=f"{ht_home} – {ht_away}" if ht_home is not None and ht_away is not None else None
  last_updated=state.get("last_success_at") or ""
