@@ -901,6 +901,68 @@ class FootballProvider:
 
         return sorted(output, key=lambda event: (event["sort_key"], event["event_uid"]))
 
+    @staticmethod
+    def _match_team_slug(value):
+        """Create a conservative URL slug from a team name."""
+        return "-".join(FootballProvider._normalize_search_name(value).split())
+
+    def match_slug_candidates(self, home, away):
+        """Build candidate match slugs from verified team slugs and normalized names.
+
+        Candidates are only hints: callers must validate the returned match detail
+        against both team names before using any timeline data.
+        """
+        import re
+
+        candidates = []
+        home_ref = self.search_team_slug(home)
+        away_ref = self.search_team_slug(away)
+        slug_pattern = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$", re.I)
+        if (home_ref and away_ref and slug_pattern.fullmatch(str(home_ref))
+                and slug_pattern.fullmatch(str(away_ref))
+                and not str(home_ref).isdigit() and not str(away_ref).isdigit()):
+            candidates.append(f"{home_ref}-vs-{away_ref}")
+
+        home_name_slug = self._match_team_slug(home)
+        away_name_slug = self._match_team_slug(away)
+        if home_name_slug and away_name_slug:
+            candidates.append(f"{home_name_slug}-vs-{away_name_slug}")
+        return list(dict.fromkeys(candidates))[:2]
+
+    @staticmethod
+    def match_detail_matches_teams(payload, home, away):
+        """Accept detail data only when it explicitly identifies the requested home/away pair."""
+        target_home = set(FootballProvider._normalize_search_name(home).split())
+        target_away = set(FootballProvider._normalize_search_name(away).split())
+        if not target_home or not target_away:
+            return False
+
+        def same_team(actual, target):
+            actual_tokens = set(FootballProvider._normalize_search_name(
+                FootballProvider.team_name(actual, "") if isinstance(actual, dict) else actual
+            ).split())
+            return bool(actual_tokens and (
+                actual_tokens == target or actual_tokens.issubset(target) or target.issubset(actual_tokens)
+            ))
+
+        def walk(value, depth=0):
+            if depth > 8:
+                return False
+            if isinstance(value, dict):
+                home_value = FootballProvider.pick(value, "home", "home_team", "team_home", "homeTeam")
+                away_value = FootballProvider.pick(value, "away", "away_team", "team_away", "awayTeam")
+                if home_value is not None and away_value is not None:
+                    if same_team(home_value, target_home) and same_team(away_value, target_away):
+                        return True
+                return any(walk(child, depth + 1) for child in value.values()
+                           if isinstance(child, (dict, list)))
+            if isinstance(value, list):
+                return any(walk(child, depth + 1) for child in value
+                           if isinstance(child, (dict, list)))
+            return False
+
+        return walk(payload)
+
     def match_detail(self, slug):
         """Fetch one match's details and official event timeline."""
         if not slug: return {}
