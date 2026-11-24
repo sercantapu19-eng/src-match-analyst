@@ -863,10 +863,17 @@ class FootballProvider:
                 "subparticipantName", "athlete", default=""
             )
             player = person_name(player_value)
-            assist = person_name(FootballProvider.pick(
+            assist_value = FootballProvider.pick(
                 item, "assist", "assist_player", "assistName", "assisted_by",
                 "assist_name", "assistant_name", default=""
-            ))
+            )
+            if not assist_value:
+                additional_info = FootballProvider.pick(item, "additional_info", "additionalInfo", default={})
+                if isinstance(additional_info, dict):
+                    assist_value = FootballProvider.pick(
+                        additional_info, "assistant_name", "assistantName", "assist", "assist_name", default=""
+                    )
+            assist = person_name(assist_value)
             team_value = FootballProvider.pick(
                 item, "team", "team_name", "teamName", "participant_name",
                 "participantName", "participant", "competitor", default=""
