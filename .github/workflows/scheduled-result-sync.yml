@@ -49,3 +49,21 @@ jobs:
               --data '{}'
             echo
           done
+      - name: Generate today's missing predictions in bounded batches
+        env:
+          SYNC_TOKEN: ${{ secrets.RESULT_SYNC_TOKEN }}
+        run: |
+          TODAY="$(TZ=Europe/Istanbul date +%F)"
+          for BATCH in $(seq 1 30); do
+            RESPONSE="$(curl --fail-with-body --silent --show-error \
+              --retry 0 --max-time 90 \
+              -X POST "https://src-match-analyst.onrender.com/sync/predictions/refresh?date=$TODAY&limit=8" \
+              -H "Authorization: Bearer $SYNC_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data '{}')"
+            echo "$RESPONSE"
+            REMAINING="$(printf '%s' "$RESPONSE" | jq -r '.remaining // 0')"
+            if [ "$REMAINING" -eq 0 ]; then
+              break
+            fi
+          done
