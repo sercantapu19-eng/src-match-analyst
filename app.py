@@ -1128,8 +1128,26 @@ def saved():
 @app.route("/results")
 def results():
  with db() as c:
-  rows=c.execute("SELECT m.home,m.away,m.league,m.kickoff,r.market,r.prediction,r.actual,r.outcome FROM results r JOIN matches m ON m.id=r.match_id WHERE m.status='finished' ORDER BY m.kickoff DESC").fetchall()
+  rows=c.execute("""SELECT m.id AS match_id,m.home,m.away,m.league,m.kickoff,
+   m.ht_home,m.ht_away,m.home_goals,m.away_goals,
+   r.market,r.prediction,r.actual,r.outcome
+   FROM results r JOIN matches m ON m.id=r.match_id
+   WHERE m.status='finished'
+   ORDER BY m.kickoff DESC,m.id DESC,r.id ASC""").fetchall()
   stats=c.execute("SELECT outcome,COUNT(*) n FROM results WHERE outcome IN ('won','lost') GROUP BY outcome").fetchall()
  counts={r["outcome"]:r["n"] for r in stats}; won=counts.get("won",0); lost=counts.get("lost",0)
- return render_template("results.html",rows=rows,won=won,lost=lost,pct=round(won*100/(won+lost)) if won+lost else 0)
+ grouped={}
+ for row in rows:
+  match_id=row["match_id"]
+  if match_id not in grouped:
+   grouped[match_id]={
+    "home":row["home"],"away":row["away"],
+    "ht_score":f"{row['ht_home']} – {row['ht_away']}" if row["ht_home"] is not None and row["ht_away"] is not None else "—",
+    "ft_score":f"{row['home_goals']} – {row['away_goals']}" if row["home_goals"] is not None and row["away_goals"] is not None else "—",
+    "markets":[]}
+  grouped[match_id]["markets"].append({
+   "market":row["market"],"prediction":row["prediction"],
+   "actual":row["actual"],"outcome":row["outcome"]})
+ return render_template("results.html",rows=list(grouped.values()),won=won,lost=lost,
+  pct=round(won*100/(won+lost)) if won+lost else 0)
 if __name__=="__main__":app.run(host="0.0.0.0",port=int(os.environ.get("PORT",5000)),debug=True)
