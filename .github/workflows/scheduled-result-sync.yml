@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/scheduled-result-sync.yml"
+      - "app.py"
+      - "result_sync.py"
+      - "football_provider.py"
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
