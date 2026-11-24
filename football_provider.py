@@ -816,7 +816,7 @@ class FootballProvider:
             if event_uid in seen:
                 continue
             seen.add(event_uid)
-            sort_key = (base_minute * 100 + (extra_minute or 0)) if base_minute is not None else 999999
+            sort_key = (base_minute * 100 + (extra_minute or 0)) if base_minute is not None else -1
             counts_for_score = kind in ("goal", "own_goal", "penalty_scored") and event_status == "confirmed"
             raw_meta = {
                 "provider_id": str(provider_id) if provider_id not in (None, "") else None,
