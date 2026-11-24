@@ -352,12 +352,15 @@ class LiveEventCacheRouteTests(unittest.TestCase):
             {"event_uid":"fallback:old-c","kind":"yellow_card","minute":"8","team_side":"away","primary_player":"","label":"Sarı kart","icon":"🟨"},
             {"event_uid":"fallback:old-d","kind":"yellow_card","minute":"8","team_side":"away","primary_player":"","label":"Sarı kart","icon":"🟨"},
             {"event_uid":"sportscore:goal-other","kind":"goal","minute":"34","team_side":"away","primary_player":"Away Scorer","label":"Gol","icon":"⚽"},
+            {"event_uid":"sportscore:corner-1","kind":"corner","minute":"55","team_side":"home","primary_player":"","label":"Korner","icon":"🚩"},
+            {"event_uid":"sportscore:corner-2","kind":"corner","minute":"55","team_side":"home","primary_player":"","label":"Korner","icon":"🚩"},
         ]
         application._store_match_events(self.match_id,events,"Alpha FC","Beta FC")
         with application.db() as conn:
             rows=application._load_match_event_rows(conn,self.match_id)
-        self.assertEqual(len(rows),3)
-        self.assertEqual({(x["kind"],x["minute"],x["team"]) for x in rows},{
+        self.assertEqual(len(rows),5)
+        self.assertEqual(sum(x["kind"]=="corner" for x in rows),2)
+        self.assertEqual({(x["kind"],x["minute"],x["team"]) for x in rows if x["kind"]!="corner"},{
             ("goal","34","home"),("yellow_card","8","away"),("goal","34","away")
         })
 
