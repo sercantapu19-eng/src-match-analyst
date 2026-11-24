@@ -181,6 +181,62 @@ class LiveEventCacheRouteTests(unittest.TestCase):
         self.assertEqual(state["provider_slug"], "buriram-united-vs-shanghai-port")
         self.assertEqual(stored, 1)
 
+    def test_team_schedule_recovers_slug_when_date_fixture_has_no_identifier(self):
+        class FakeProvider:
+            detail_calls = 0
+            team_schedule_calls = 0
+            _normalize_search_name = staticmethod(FootballProvider._normalize_search_name)
+            find_matching_live_fixture = staticmethod(FootballProvider.find_matching_live_fixture)
+            parse_match_events = staticmethod(FootballProvider.parse_match_events)
+
+            def __init__(self, api_key=None):
+                pass
+
+            def live_matches(self, limit=50):
+                return []
+
+            def fixtures(self, day, status=None):
+                return [{
+                    "id": "", "slug": "", "home": "Alpha FC", "away": "Beta FC",
+                    "status": "live", "status_short": "LIVE", "elapsed_minute": None,
+                    "home_goals": 0, "away_goals": 0,
+                    "kickoff": day + "T18:00:00+03:00",
+                }]
+
+            def team_fixtures_for_team(self, team_name, limit=30):
+                type(self).team_schedule_calls += 1
+                return [{
+                    "id": "", "slug": "alpha-fc-vs-beta-fc/test-live-slug",
+                    "home": "Alpha FC", "away": "Beta FC", "status": "scheduled",
+                    "status_short": "NS", "elapsed_minute": None,
+                    "home_goals": None, "away_goals": None,
+                    "kickoff": "2026-11-24T18:00:00+03:00",
+                }]
+
+            def match_detail(self, slug):
+                type(self).detail_calls += 1
+                self.assertion_slug = slug
+                return {"events": [{
+                    "id": "goal-12", "type": "goal", "minute": 12,
+                    "player": "Test Scorer", "team": "Alpha FC",
+                }]}
+
+        with patch.object(application, "FootballProvider", FakeProvider):
+            response = self.client.get(f"/match/{self.match_id}/live-data")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(len(payload["events"]), 1)
+        self.assertEqual(payload["events"][0]["primary_player"], "Test Scorer")
+        self.assertEqual(FakeProvider.detail_calls, 1)
+        self.assertEqual(FakeProvider.team_schedule_calls, 1)
+        with application.db() as conn:
+            state = conn.execute(
+                "SELECT provider_slug FROM match_live_state WHERE match_id=?",
+                (self.match_id,),
+            ).fetchone()
+        self.assertEqual(state["provider_slug"], "alpha-fc-vs-beta-fc/test-live-slug")
+
     def test_duplicate_event_upsert_and_explicit_var_cancellation_preserve_history(self):
         events = FootballProvider.parse_match_events({
             "events": [

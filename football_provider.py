@@ -620,8 +620,8 @@ class FootballProvider:
 
 
     @staticmethod
-    def find_matching_live_fixture(fixtures, home, away, kickoff=None):
-        """Prefer exact team names; use unique suffix-tolerant matches only as fallback."""
+    def find_matching_live_fixture(fixtures, home, away, kickoff=None, allow_missing_identifier=False):
+        """Prefer exact team names; optionally match identifier-less date-feed rows for slug recovery."""
         def tokens(value):
             return set(FootballProvider._normalize_search_name(value).split())
         target_home, target_away = tokens(home), tokens(away)
@@ -631,7 +631,7 @@ class FootballProvider:
         for fixture in fixtures or []:
             if not isinstance(fixture, dict) or fixture.get("status") != "live":
                 continue
-            if not (fixture.get("slug") or fixture.get("id")):
+            if not allow_missing_identifier and not (fixture.get("slug") or fixture.get("id")):
                 continue
             feed_home, feed_away = tokens(fixture.get("home", "")), tokens(fixture.get("away", ""))
             if not feed_home or not feed_away:
