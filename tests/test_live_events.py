@@ -123,6 +123,38 @@ class LiveEventCacheRouteTests(unittest.TestCase):
             ).fetchone()["count"]
         self.assertEqual(stored, 1)
 
+    def test_fresh_persisted_events_return_without_provider_network_calls(self):
+        now = application._utc_iso()
+        with application.db() as conn:
+            conn.execute(
+                """INSERT INTO match_live_state(
+                    match_id,provider_slug,status,home_score,away_score,
+                    last_attempt_at,last_success_at,last_error
+                ) VALUES(?,?,?,?,?,?,?,'')""",
+                (self.match_id,"alpha-vs-beta","live",0,0,now,now),
+            )
+        application._store_match_events(self.match_id,[{
+            "event_uid":"sportscore:yellow-8","kind":"yellow_card","event_status":"confirmed",
+            "minute":"8","extra_minute":None,"sort_key":800,"primary_player":"",
+            "secondary_player":"","detail":"","icon":"🟨","label":"Sarı kart",
+            "counts_for_score":False,"raw_meta":{"raw_type":"Yellow card"},"team":"Beta FC",
+        }],"Alpha FC","Beta FC")
+
+        class NoNetworkProvider:
+            def __init__(self, api_key=None):
+                raise AssertionError("Fresh persisted event response must not call SportScore")
+
+        with patch.object(application,"FootballProvider",NoNetworkProvider):
+            response=self.client.get(f"/match/{self.match_id}/live-data")
+
+        self.assertEqual(response.status_code,200)
+        payload=response.get_json()
+        self.assertTrue(payload["events_available"])
+        self.assertEqual(len(payload["events"]),1)
+        self.assertEqual(payload["events"][0]["kind"],"yellow_card")
+        self.assertEqual(payload["events"][0]["minute_label"],"8′")
+        self.assertEqual(payload["events"][0]["team"],"away")
+
     def test_date_fixture_fallback_matches_live_game_missing_from_widget_feed(self):
         class FakeProvider:
             detail_calls = 0
