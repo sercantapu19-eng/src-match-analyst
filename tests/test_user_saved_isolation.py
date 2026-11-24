@@ -246,6 +246,10 @@ class SavedMatchIsolationTests(unittest.TestCase):
                 "htft": "",
             })
 
+        duplicate = dict(rows[0])
+        duplicate["id"] = 999
+        rows.append(duplicate)
+
         picks, eligible_matches = application._daily_top_ten(rows)
         self.assertEqual(eligible_matches, 6)
         self.assertEqual(len(picks), 10)
