@@ -212,6 +212,11 @@ label,.muted,small{color:var(--muted)}
 .daily-ten-fixture{display:block;color:var(--text);font-size:13px;font-weight:800;text-decoration:none}
 .daily-ten-fixture:hover{color:var(--accent)}
 .daily-ten-selection{display:inline-flex;margin:8px 0 7px;padding:5px 9px;border-radius:7px;background:var(--surface3);font-size:12px;font-weight:800}
+.daily-ten-save-row{display:flex;justify-content:flex-end;align-items:center;min-height:30px;margin-top:7px}
+.daily-ten-save-form{display:inline-flex;margin:0}
+.daily-ten-save-button{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:6px 11px;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#14220b!important;font-size:11px;font-weight:850;line-height:1;text-decoration:none;white-space:nowrap;cursor:pointer}
+.daily-ten-save-button:hover{filter:brightness(.96)}
+.daily-ten-saved{display:inline-flex;align-items:center;min-height:28px;padding:5px 9px;border:1px solid color-mix(in srgb,var(--accent2) 40%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--accent2) 12%,var(--surface));color:var(--accent2)!important;font-size:11px;font-weight:850;white-space:nowrap}
 .daily-ten-pick>small,.daily-ten-disclaimer{display:block;color:var(--muted);font-size:10px;line-height:1.5}
 .daily-ten-disclaimer{margin-top:12px}
 .daily-ten-empty{margin:0 0 22px}
