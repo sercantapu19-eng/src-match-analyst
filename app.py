@@ -1609,12 +1609,33 @@ def match_live_data(mid):
  if not row:
   return jsonify({"error":"Maç bulunamadı."}),404
  match=dict(row)
+ state=dict(state_row) if state_row else {}
  if match["status"] not in ("live","finished"):
   return jsonify({"status":match["status"],"events":saved_events,"minute":match["elapsed_minute"],
    "events_available":bool(saved_events)})
+ # Serve already-persisted events immediately during the refresh cache window.
+ # The detail page must not wait on another provider feed/schedule lookup just
+ # to display an event that is already stored locally.
+ if state and _is_cache_fresh(state.get("last_attempt_at"),MATCH_EVENT_CACHE_SECONDS):
+  period="finished" if match.get("status")=="finished" else _live_period(
+   state.get("status") or match.get("status_short") or match.get("status"))
+  minute=state.get("minute") if state.get("minute") not in (None,"") else match.get("elapsed_minute")
+  home_score=state.get("home_score") if state.get("home_score") is not None else match.get("home_goals")
+  away_score=state.get("away_score") if state.get("away_score") is not None else match.get("away_goals")
+  ht_home=state.get("ht_home") if state.get("ht_home") is not None else match.get("ht_home")
+  ht_away=state.get("ht_away") if state.get("ht_away") is not None else match.get("ht_away")
+  return jsonify({
+   "status":period,"minute":minute,"minute_label":_live_minute_label(period,minute),
+   "score":f"{home_score} – {away_score}" if home_score is not None and away_score is not None else None,
+   "ht_score":f"{ht_home} – {ht_away}" if ht_home is not None and ht_away is not None else None,
+   "events":saved_events,"events_available":bool(saved_events),
+   "last_updated":state.get("last_success_at") or "",
+   "message":None if saved_events else (
+    "Canlı olay verisi geçici olarak alınamadı; son kayıtlı bilgiler korunuyor."
+    if state.get("last_error") else "Sağlayıcı bu karşılaşma için henüz olay listesi döndürmedi.")
+  })
  provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
  fixture=None
- state=dict(state_row) if state_row else {}
  if match["status"]=="live":
   try:
    live_fixtures=_cached_sportscore_live_feed(provider)
