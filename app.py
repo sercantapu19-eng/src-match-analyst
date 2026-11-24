@@ -530,9 +530,15 @@ def refresh_results():
    fixtures=provider.fixtures(target_day)
    fetched+=len(fixtures)
    with db() as c:
-    candidates=c.execute("""SELECT * FROM matches
+    candidates=[dict(row) for row in c.execute("""SELECT * FROM matches
       WHERE substr(kickoff,1,10)=?
-      ORDER BY id""",(target_day,)).fetchall()
+      ORDER BY id""",(target_day,)).fetchall()]
+    day_results=c.execute("""SELECT r.match_id,r.market,r.prediction,r.actual,r.outcome
+      FROM results r JOIN matches m ON m.id=r.match_id
+      WHERE substr(m.kickoff,1,10)=?""",(target_day,)).fetchall()
+    results_by_match={}
+    for result in day_results:
+     results_by_match.setdefault(result["match_id"],[]).append(dict(result))
     candidate_by_key={}
     candidate_by_pair={}
     for candidate in candidates:
@@ -620,18 +626,27 @@ def refresh_results():
       for market,label in MARKETS
       if market in actuals
      }
-     result_rows=c.execute(
-      "SELECT market,prediction FROM results WHERE match_id=?",(mid,)
-     ).fetchall()
-     for result_row in result_rows:
+     match_results=results_by_match.setdefault(mid,[])
+     existing_markets={result["market"] for result in match_results}
+     for market,label in MARKETS:
+      prediction=row.get(market)
+      if prediction and label not in existing_markets:
+       c.execute("INSERT INTO results(match_id,market,prediction) VALUES(?,?,?) ON CONFLICT(match_id,market) DO UPDATE SET prediction=excluded.prediction",
+        (mid,label,prediction))
+       match_results.append({"market":label,"prediction":prediction,"actual":"","outcome":"pending"})
+       existing_markets.add(label)
+     for result_row in match_results:
       actual=actual_by_label.get(result_row["market"])
       prediction=result_row["prediction"]
       if actual is None or not prediction:
        continue
       outcome=evaluate_prediction(prediction,actual)
-      c.execute("UPDATE results SET actual=?,outcome=? WHERE match_id=? AND market=?",
-       (actual,outcome,mid,result_row["market"]))
-      evaluated+=1
+      if result_row.get("actual")!=actual or result_row.get("outcome")!=outcome:
+       c.execute("UPDATE results SET actual=?,outcome=? WHERE match_id=? AND market=?",
+        (actual,outcome,mid,result_row["market"]))
+       result_row["actual"]=actual
+       result_row["outcome"]=outcome
+       evaluated+=1
 
     c.execute("INSERT INTO sync_log(provider,day,ran_at,fixtures_count,status,message) VALUES(?,?,?,?,?,?)",
      ("sportscore",target_day,datetime.utcnow().isoformat(),len(fixtures),"success",
