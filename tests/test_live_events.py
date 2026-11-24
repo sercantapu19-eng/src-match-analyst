@@ -142,14 +142,14 @@ class LiveEventCacheRouteTests(unittest.TestCase):
                 return [{
                     "id": "sportscore-match-38887",
                     "slug": "buriram-united-vs-shanghai-port",
-                    "home": "Shanghai Port",
-                    "away": "Buriram United",
+                    "home": "Alpha FC",
+                    "away": "Beta FC",
                     "status": "live",
                     "status_short": "2H",
                     "elapsed_minute": 91,
                     "home_goals": 3,
                     "away_goals": 1,
-                    "kickoff": day + "T12:15:00+03:00",
+                    "kickoff": day + "T18:00:00+03:00",
                 }]
 
             def match_detail(self, slug):
@@ -157,7 +157,7 @@ class LiveEventCacheRouteTests(unittest.TestCase):
                 self.assertion_slug = slug
                 return {"events": [{
                     "id": "goal-69", "type": "goal", "minute": 69,
-                    "player": "Prince Ampem", "team": "Shanghai Port",
+                    "player": "Prince Ampem", "team": "Alpha FC",
                 }]}
 
         with patch.object(application, "FootballProvider", FakeProvider):
