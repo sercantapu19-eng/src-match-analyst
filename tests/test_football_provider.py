@@ -43,6 +43,33 @@ class FakeSession:
         return FakeResponse()
 
 class FootballProviderTests(unittest.TestCase):
+    def test_nested_match_object_preserves_provider_slug(self):
+        provider = FootballProvider()
+        rows = provider.parse_fixtures_payload({
+            "matches": [{
+                "match": {"slug": "slovan-bratislava-u19-vs-real-betis-u19", "id": 7420812},
+                "home": {"name": "Slovan Bratislava U19"},
+                "away": {"name": "Real Betis U19"},
+                "status": "live", "home_score": 1, "away_score": 2,
+                "date": "2026-11-24T13:00:00Z"
+            }]
+        })
+        self.assertEqual(rows[0]["slug"], "slovan-bratislava-u19-vs-real-betis-u19")
+        self.assertEqual(rows[0]["id"], "7420812")
+
+    def test_match_page_url_can_supply_slug_without_using_team_ids(self):
+        provider = FootballProvider()
+        rows = provider.parse_fixtures_payload({
+            "matches": [{
+                "home": {"name": "Slovan Bratislava U19", "id": "home-team-id"},
+                "away": {"name": "Real Betis U19", "id": "away-team-id"},
+                "match_url": "https://sportscore.com/football/slovan-bratislava-u19-vs-real-betis-u19",
+                "status": "live"
+            }]
+        })
+        self.assertEqual(rows[0]["slug"], "slovan-bratislava-u19-vs-real-betis-u19")
+        self.assertEqual(rows[0]["id"], "slovan-bratislava-u19-vs-real-betis-u19")
+
     def test_finished_fixture_and_half_time_scores_are_parsed(self):
         provider = FootballProvider()
         fake = FakeSession()

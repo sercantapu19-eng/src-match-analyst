@@ -388,7 +388,8 @@ def _cached_sportscore_date_fixtures(provider, day):
 
 def _cached_sportscore_team_fixtures(provider, match_id, team_name):
  """Share a team-schedule lookup used to recover a match slug omitted by /fixtures/."""
- poll_key=f"sportscore_team_fixtures_match:{int(match_id)}"
+ team_key=FootballProvider._normalize_search_name(team_name).replace(" ", "_") or "unknown"
+ poll_key=f"sportscore_team_fixtures_match:{int(match_id)}:{team_key}"
  now_dt=datetime.now(timezone.utc)
  now=_utc_iso(now_dt)
  lease=_utc_iso(now_dt+timedelta(seconds=LIVE_REFRESH_LEASE_SECONDS))

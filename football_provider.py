@@ -361,8 +361,8 @@ class FootballProvider:
                 except (TypeError, ValueError):
                     return None
             output.append({
-                "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
-                "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
+                "id": self.fixture_identity(item)[0] or self.fixture_identity(item)[1],
+                "slug": self.fixture_identity(item)[1],
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "home_team_ref": self.team_reference(home), "away_team_ref": self.team_reference(away),
                 "home_name_placeholder": self.is_placeholder_team_name(home_name),
@@ -474,6 +474,61 @@ class FootballProvider:
                 return next(iter(best_slugs))
         return None
 
+    @staticmethod
+    def fixture_identity(item):
+        """Extract match-only identifiers from flat or nested SportScore fixture rows."""
+        import re
+
+        slug_keys = ("slug", "match_slug", "matchSlug", "fixture_slug", "fixtureSlug",
+                     "event_slug", "eventSlug", "url_slug", "urlSlug")
+        id_keys = ("fixture_id", "fixtureId", "match_id", "matchId", "event_id", "eventId", "id")
+        containers = ("match", "fixture", "event", "game", "details", "data", "source")
+
+        def scalar(value):
+            if isinstance(value, str):
+                return value.strip()
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return str(value)
+            return ""
+
+        def find(value, keys, depth=0):
+            if not isinstance(value, dict) or depth > 4:
+                return ""
+            for key in keys:
+                found = scalar(value.get(key))
+                if found:
+                    return found
+            excluded = {"home", "away", "home_team", "away_team", "team_home", "team_away",
+                        "hometeam", "awayteam", "league", "competition", "country"}
+            for key, child in value.items():
+                if str(key).casefold() in excluded:
+                    continue
+                if isinstance(child, dict):
+                    found = find(child, keys, depth + 1)
+                    if found:
+                        return found
+                elif isinstance(child, list):
+                    for row in child:
+                        found = find(row, keys, depth + 1)
+                        if found:
+                            return found
+            return ""
+
+        slug = find(item, slug_keys)
+        identifier = find(item, id_keys)
+        if not slug:
+            # Some widget variants expose a match page path rather than a slug field.
+            for key in ("match_url", "matchUrl", "fixture_url", "fixtureUrl", "url", "href", "link"):
+                raw = scalar(item.get(key)) if isinstance(item, dict) else ""
+                if not raw:
+                    continue
+                path = raw.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+                candidate = path.rsplit("/", 1)[-1]
+                if candidate and ("-vs-" in candidate or re.search(r"\\bmatch\\b", path, re.I)):
+                    slug = candidate
+                    break
+        return identifier, slug
+
     def parse_fixtures_payload(self, payload, resolve_placeholders=True, max_team_lookups=2):
         """Parse fixtures and resolve only uniquely identifiable provider placeholder teams."""
         rows = self._extract_rows(payload)
@@ -554,8 +609,8 @@ class FootballProvider:
                 except (TypeError, ValueError):
                     return None
             output.append({
-                "id": str(self.pick(item, "id", "fixture_id", "match_id", "slug", default="")),
-                "slug": str(self.pick(item, "slug", "match_slug", "fixture_slug", default="")),
+                "id": self.fixture_identity(item)[0] or self.fixture_identity(item)[1],
+                "slug": self.fixture_identity(item)[1],
                 "home": str(home_name), "away": str(away_name), "league": league,
                 "home_team_ref": self.team_reference(home),
                 "away_team_ref": self.team_reference(away),
