@@ -44,3 +44,15 @@ Integrate a licensed football data provider, timestamped odds sources, team news
 - CSRF validation is enforced for unsafe requests, including live-score refresh. Failed logins are throttled to 10 per 15 minutes per email or IP; account-creation attempts, including successful signups, are throttled to 10 per 15 minutes per IP using database-backed counters.
 - Production startup requires a configured SECRET_KEY of at least 32 characters.
 - SQLite connections are closed after each database context to avoid connection leaks. This remains an initial account foundation, not a complete public launch security review. Add email verification, password reset, privacy/terms pages, abuse monitoring, PostgreSQL concurrency tests, and review proxy-aware rate limiting/live-refresh caching before promoting the site publicly.
+
+## Bookmaker odds integration
+
+- Add the secret `API_FOOTBALL_KEY` to the Render service environment. Never commit the key or send it in chat.
+- The odds adapter uses API-Football's football fixture, pre-match odds, and in-play odds endpoints.
+- Match IDs are resolved by normalized home/away team names and kickoff proximity. Ambiguous matches are not mapped.
+- Pre-match odds are requested at most once every three hours per fixture. In-play odds are fetched as one shared feed for all mapped live fixtures, then fanned out to the corresponding SRC matches.
+- The shared in-play poll interval defaults to 15 seconds and can be changed with `ODDS_LIVE_POLL_SECONDS` (5–60).
+- Only changed prices are appended to `match_odds_snapshots`. Existing matches, user accounts, saved selections, and results are not rewritten.
+- `first_seen` means the first pre-match price SRC actually captured. It is not represented as the bookmaker's official opening price. No historical prices are invented.
+- API-Football's published free plan includes 100 requests/day; its published Pro plan includes 7,500 requests/day. A continuously polled live feed is not practical on the free quota. Review current provider pricing and coverage before enabling production polling.
+- The API may not offer every bookmaker or market for every competition. Empty results are displayed as unavailable, never filled with estimates.
