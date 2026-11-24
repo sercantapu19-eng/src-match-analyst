@@ -342,6 +342,121 @@ def team_logo():
  except ProviderError:
   return jsonify({"logo":None}),503
 
+
+def _daily_top_ten(rows):
+ """Rank the day's strongest model picks, spreading them across at least five fixtures."""
+ groups = {}
+ def read(record, key):
+  try:
+   return record[key]
+  except (KeyError, IndexError, TypeError):
+   return None
+ def pct(value):
+  try:
+   number=float(value)
+  except (TypeError,ValueError):
+   return None
+  if 1 < number <= 100:
+   pass
+  elif 0 <= number <= 1:
+   number *= 100
+  else:
+   return None
+  return max(0,min(100,round(number)))
+ def add(group, market, prediction, probability):
+  score=pct(probability)
+  if score is None or not str(prediction or "").strip():
+   return
+  group["picks"].append({
+   "id":group["id"],"home":group["home"],"away":group["away"],
+   "league":group["league"],"kickoff":group["kickoff"],
+   "market":market,"prediction":str(prediction).strip(),"confidence":score
+  })
+ for row in rows:
+  match_id=read(row,"id")
+  try:
+   probs=json.loads(read(row,"market_probabilities") or "{}")
+  except (TypeError,ValueError):
+   probs={}
+  try:
+   confidence=json.loads(read(row,"prediction_confidence") or "{}")
+  except (TypeError,ValueError):
+   confidence={}
+  group={"id":match_id,"home":read(row,"home") or "Ev sahibi",
+   "away":read(row,"away") or "Deplasman","league":read(row,"league") or "",
+   "kickoff":read(row,"kickoff") or "","picks":[]}
+  result=probs.get("match_result")
+  if isinstance(result,dict) and result:
+   key=max(result,key=lambda item:pct(result[item]) if pct(result[item]) is not None else -1)
+   add(group,"Maç Sonucu",{"1":"MS 1","X":"MS X","2":"MS 2"}.get(str(key),str(key)),result[key])
+  first_result=probs.get("first_half_result")
+  if isinstance(first_result,dict) and first_result:
+   key=max(first_result,key=lambda item:pct(first_result[item]) if pct(first_result[item]) is not None else -1)
+   add(group,"İlk Yarı Sonucu",{"1":"İY 1","X":"İY X","2":"İY 2"}.get(str(key),str(key)),first_result[key])
+  goals=probs.get("goals")
+  if isinstance(goals,dict):
+   for line in ("1.5","2.5","3.5","4.5"):
+    values=goals.get(line) or goals.get(line.replace(".",","))
+    if not isinstance(values,dict):
+     continue
+    over=pct(values.get("over")); under=pct(values.get("under"))
+    if over is None or under is None:
+     continue
+    add(group,line.replace(".",",")+" Gol","Üst" if over>=under else "Alt",max(over,under))
+  for key,label in (("btts","KG"),("first_half_btts","İlk Yarı KG"),("second_half_btts","İkinci Yarı KG")):
+   values=probs.get(key)
+   if isinstance(values,dict) and values:
+    selection=max(values,key=lambda item:pct(values[item]) if pct(values[item]) is not None else -1)
+    add(group,label,selection,values[selection])
+  htft=probs.get("htft")
+  if isinstance(htft,dict) and htft:
+   selection=max(htft,key=lambda item:pct(htft[item]) if pct(htft[item]) is not None else -1)
+   add(group,"İY/MS",selection,htft[selection])
+  # Older rows may have confidence/prediction columns but no full probability map.
+  fallback=(("match_result","Maç Sonucu"),("over25","2,5 Gol"),("btts","KG"),
+   ("first_half_btts","İlk Yarı KG"),("second_half_btts","İkinci Yarı KG"),("htft","İY/MS"))
+  present={pick["market"] for pick in group["picks"]}
+  for key,label in fallback:
+   prediction=read(row,key)
+   if label in present or not prediction:
+    continue
+   add(group,label,prediction,confidence.get(key))
+  if group["picks"]:
+   # Match the same real fixture even if the provider inserted duplicate DB rows.
+   fixture_key=tuple(str(group[key] or "").strip().casefold() for key in ("home","away","league","kickoff"))
+   existing=groups.get(fixture_key)
+   if existing:
+    for pick in group["picks"]:
+     pick["id"]=existing["id"]
+    merged={pick["market"]:pick for pick in existing["picks"]}
+    for pick in group["picks"]:
+     previous=merged.get(pick["market"])
+     if previous is None or pick["confidence"]>previous["confidence"]:
+      merged[pick["market"]]=pick
+    existing["picks"]=list(merged.values())
+   else:
+    unique={pick["market"]:pick for pick in group["picks"]}
+    group["picks"]=list(unique.values())
+    groups[fixture_key]=group
+ for group in groups.values():
+  group["picks"].sort(key=lambda item:(-item["confidence"],item["market"]))
+ # If five distinct eligible fixtures do not exist, do not publish a misleading 10-pick slate.
+ if len(groups)<5:
+  return [],len(groups)
+ ordered=sorted(groups.values(),key=lambda group:(-group["picks"][0]["confidence"],group["kickoff"],str(group["id"])))
+ selected=[]
+ # First pass: one best pick from each fixture, ensuring maximum match diversity.
+ for group in ordered:
+  if len(selected)>=10:
+   break
+  selected.append(group["picks"][0])
+ # Second pass: add only one additional pick per fixture, strongest options first.
+ second=[group["picks"][1] for group in ordered if len(group["picks"])>1]
+ second.sort(key=lambda item:(-item["confidence"],item["kickoff"],str(item["id"])))
+ selected.extend(second[:max(0,10-len(selected))])
+ return selected[:10],len(groups)
+
+
 @app.route("/")
 def index():
  # Render's host clock may be UTC; the bulletin date must follow Turkish local time.
@@ -372,8 +487,6 @@ def index():
   today_total=c.execute("""SELECT COUNT(*) FROM (SELECT ROW_NUMBER() OVER (PARTITION BY lower(trim(home)),lower(trim(away)),lower(trim(league)),kickoff ORDER BY id) rank_no FROM matches WHERE substr(kickoff,1,10)=?) ranked WHERE rank_no=1""",(day,)).fetchone()[0]
   settled=c.execute("SELECT COUNT(*) total,SUM(CASE WHEN outcome='won' THEN 1 ELSE 0 END) won FROM results WHERE outcome IN ('won','lost')").fetchone()
   success_rate=round((settled['won'] or 0)*100/settled['total']) if settled['total'] else 0
-  recent=c.execute("SELECT outcome FROM results WHERE outcome IN ('won','lost') ORDER BY id DESC LIMIT 10").fetchall()
-  recent_count=len(recent); recent_wins=sum(1 for item in recent if item['outcome']=='won')
   live_featured=c.execute("""SELECT id,home,away,league,kickoff,home_goals,away_goals,
    ht_home,ht_away,elapsed_minute,status_short FROM matches
    WHERE status='live' ORDER BY kickoff DESC,id DESC LIMIT 1""").fetchone()
@@ -397,11 +510,21 @@ def index():
    ) AS duplicate_rank
    FROM matches WHERE substr(kickoff,1,10)=? AND status='live'
   ) ranked WHERE duplicate_rank=1""",(day,)).fetchone()[0]
+  daily_candidate_rows=c.execute("""SELECT id,home,away,league,kickoff,status,
+   match_result,over25,btts,first_half_btts,second_half_btts,htft,
+   prediction_confidence,market_probabilities
+   FROM matches WHERE substr(kickoff,1,10)=? AND status='scheduled'
+    AND COALESCE(prediction_message,'')=''
+    AND COALESCE(market_probabilities,'{}') NOT IN ('','{}')
+    AND datetime(kickoff)>=datetime('now')
+   ORDER BY kickoff,id""",(day,)).fetchall()
+  daily_picks,daily_match_count=_daily_top_ten(daily_candidate_rows)
   last=c.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
  return render_template("index.html",matches=ms,saved_count=saved,done_count=done,day=day,
   provider_ready=provider_ready(),last_sync=last,view=view,upcoming_count=upcoming,
   unverified_count=unverified,live_count=live_count,today_total=today_total,
-  success_rate=success_rate,recent_count=recent_count,recent_wins=recent_wins,
+  success_rate=success_rate,
+  daily_picks=daily_picks,daily_pick_count=len(daily_picks),daily_match_count=daily_match_count,
   live_featured=live_featured)
 
 @app.post("/sync/fixtures")
@@ -1165,6 +1288,19 @@ def saved():
  results_by_match={}
  for row in rows: results_by_match.setdefault(row["match_id"],[]).append(dict(row))
  return render_template("saved.html",matches=ms,results_by_match=results_by_match,selected_predictions=selected)
+def _goal_side_label(market, selection):
+ """Hide repeated goal-line value in selection labels on the results screen."""
+ market_key="".join(str(market or "").casefold().replace(",",".").split())
+ if market_key not in {"1.5gol","2.5gol","3.5gol","4.5gol"}:
+  return selection or "—"
+ value=str(selection or "").strip().casefold()
+ if value.startswith(("üst","over")):
+  return "Üst"
+ if value.startswith(("alt","under")):
+  return "Alt"
+ return selection or "—"
+
+
 @app.route("/results")
 def results():
  with db() as c:
@@ -1190,8 +1326,12 @@ def results():
     "ft_score":f"{row['home_goals']} – {row['away_goals']}" if row["home_goals"] is not None and row["away_goals"] is not None else "—",
     "markets":[]}
   grouped[match_id]["markets"].append({
-   "market":row["market"],"prediction":row["prediction"],
-   "actual":row["actual"],"outcome":row["outcome"]})
+   "market":row["market"],
+   "prediction":row["prediction"],
+   "actual":row["actual"],
+   "prediction_display":_goal_side_label(row["market"],row["prediction"]),
+   "actual_display":_goal_side_label(row["market"],row["actual"]),
+   "outcome":row["outcome"]})
  return render_template("results.html",rows=list(grouped.values()),won=won,lost=lost,
   pct=round(won*100/(won+lost)) if won+lost else 0)
 if __name__=="__main__":app.run(host="0.0.0.0",port=int(os.environ.get("PORT",5000)),debug=True)

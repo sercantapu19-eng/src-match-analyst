@@ -185,6 +185,27 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertIn("Alpha FC – Beta FC", page)
         self.assertIn(date.today().strftime("%d.%m.%Y"), page)
 
+    def test_goal_total_results_hide_repeated_line_from_prediction_and_actual(self):
+        with application.db() as conn:
+            conn.execute(
+                "UPDATE matches SET status='finished',home_goals=3,away_goals=2 WHERE id=?",
+                (self.match_one,),
+            )
+            conn.executemany(
+                "INSERT INTO results(match_id,market,prediction,actual,outcome) VALUES(?,?,?,?,?)",
+                [
+                    (self.match_one,"1,5 Gol","Üst 1,5","Üst 1,5","won"),
+                    (self.match_one,"2,5 Gol","Üst 2,5","Üst 2,5","won"),
+                    (self.match_one,"3,5 Gol","Alt 3,5","Üst 3,5","lost"),
+                    (self.match_one,"4,5 Gol","Alt 4,5","Alt 4,5","won"),
+                ],
+            )
+        page = self.client.get("/results").get_data(as_text=True)
+        self.assertIn("<td>1,5 Gol</td><td>Üst</td><td>Üst</td>", page)
+        self.assertIn("<td>2,5 Gol</td><td>Üst</td><td>Üst</td>", page)
+        self.assertIn("<td>3,5 Gol</td><td>Alt</td><td>Üst</td>", page)
+        self.assertIn("<td>4,5 Gol</td><td>Alt</td><td>Alt</td>", page)
+
     def test_regular_user_does_not_see_admin_match_controls(self):
         self._login_as(self.user_one, "one@example.com")
         response = self.client.get(f"/match/{self.match_one}")
@@ -193,6 +214,67 @@ class SavedMatchIsolationTests(unittest.TestCase):
         self.assertNotIn('action="/match/%s/status"' % self.match_one, page)
         self.assertNotIn('action="/match/%s/result"' % self.match_one, page)
 
+
+
+    def test_daily_top_ten_uses_at_least_five_fixtures_and_max_two_picks_per_fixture(self):
+        import json
+
+        rows = []
+        for number in range(6):
+            rows.append({
+                "id": number + 100,
+                "home": f"Home {number}",
+                "away": f"Away {number}",
+                "league": "Test League",
+                "kickoff": f"2026-11-24T{15 + number:02d}:00:00+03:00",
+                "prediction_confidence": json.dumps({}),
+                "market_probabilities": json.dumps({
+                    "match_result": {"1": 0.86 - number * 0.01, "X": 0.08, "2": 0.06},
+                    "goals": {
+                        "1.5": {"over": 0.79, "under": 0.21},
+                        "2.5": {"over": 0.68, "under": 0.32},
+                        "3.5": {"over": 0.42, "under": 0.58},
+                        "4.5": {"over": 0.22, "under": 0.78},
+                    },
+                    "btts": {"Var": 0.71, "Yok": 0.29},
+                }),
+                "match_result": "MS 1",
+                "over25": "Üst 2,5",
+                "btts": "Var",
+                "first_half_btts": "",
+                "second_half_btts": "",
+                "htft": "",
+            })
+
+        duplicate = dict(rows[0])
+        duplicate["id"] = 999
+        rows.append(duplicate)
+
+        picks, eligible_matches = application._daily_top_ten(rows)
+        self.assertEqual(eligible_matches, 6)
+        self.assertEqual(len(picks), 10)
+        counts = {}
+        for pick in picks:
+            counts[pick["id"]] = counts.get(pick["id"], 0) + 1
+        self.assertGreaterEqual(len(counts), 5)
+        self.assertLessEqual(max(counts.values()), 2)
+
+    def test_daily_top_ten_waits_until_five_distinct_matches_are_eligible(self):
+        rows = []
+        for number in range(4):
+            rows.append({
+                "id": number + 200,
+                "home": f"Home {number}",
+                "away": f"Away {number}",
+                "league": "Test League",
+                "kickoff": f"2026-11-24T{15 + number:02d}:00:00+03:00",
+                "prediction_confidence": "{}",
+                "market_probabilities": '{"match_result":{"1":0.8,"X":0.1,"2":0.1}}',
+                "match_result": "MS 1",
+            })
+        picks, eligible_matches = application._daily_top_ten(rows)
+        self.assertEqual(picks, [])
+        self.assertEqual(eligible_matches, 4)
 
 if __name__ == "__main__":
     unittest.main()

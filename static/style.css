@@ -191,3 +191,108 @@ label,.muted,small{color:var(--muted)}
 
 .live-featured{margin:15px 0;padding:0 0 13px;border:1px solid var(--line);border-radius:15px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}.live-featured-head{display:flex;justify-content:space-between;align-items:center;padding:10px 15px;background:linear-gradient(90deg,#b51e2c,#e13b43);color:white;font-size:12px;font-weight:900;letter-spacing:.08em}.live-featured-head span{display:flex;align-items:center;gap:8px}.live-featured-head i{width:8px;height:8px;border-radius:50%;background:#fff;box-shadow:0 0 0 4px #ffffff35}.live-featured-head b{padding:4px 8px;border-radius:7px;background:#ffffff22}.live-featured-teams{display:grid;grid-template-columns:minmax(0,1fr) minmax(100px,.7fr) minmax(0,1fr);align-items:center;gap:10px;padding:17px 20px 12px}.live-featured-teams>div{display:flex;align-items:center;gap:10px;min-width:0}.live-featured-teams>div:last-child{flex-direction:row-reverse;text-align:right}.live-featured-teams strong{font-size:13px;overflow-wrap:anywhere}.live-featured-score{display:flex!important;flex-direction:column;align-items:center!important;text-align:center!important}.live-featured-score strong{font:800 32px Manrope;white-space:nowrap}.live-featured-score small{color:var(--muted);font-size:11px}.live-featured-events{display:flex;gap:9px;flex-wrap:wrap;padding:8px 18px 12px}.live-featured-events div{display:flex;gap:6px;align-items:center;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface2);font-size:11px}.live-featured-events div b{color:var(--accent)}.live-featured-events>span{color:var(--muted);font-size:11px}.live-featured>a{display:inline-block;margin:0 18px;color:var(--accent);font-size:11px;font-weight:800;text-decoration:none}.live-featured-empty{padding-bottom:15px}.live-featured-empty p{margin:14px 16px 0;color:var(--muted);font-size:12px}
 @media(max-width:600px){.live-featured-teams{grid-template-columns:minmax(0,1fr) minmax(75px,.65fr) minmax(0,1fr);gap:4px;padding:14px 9px}.live-featured-teams>div{flex-direction:column!important;text-align:center!important;gap:6px}.live-featured-teams strong{font-size:10px}.live-featured-score strong{font-size:24px}.live-featured-events{padding:6px 9px}.live-featured-events div{font-size:10px;padding:5px 7px}}
+
+/* Fixture date and kickoff time: date on top, clock directly below */
+.src-fixtures td.fixture-time{display:table-cell;min-width:88px;white-space:nowrap;vertical-align:middle;color:var(--muted)}
+.src-fixtures .fixture-date{display:block;font-size:12px;font-weight:750;line-height:1.25;color:var(--text)}
+.src-fixtures .fixture-hour{display:block;margin-top:4px;font-size:11px;font-weight:650;line-height:1.2;color:var(--muted)}
+@media(max-width:700px){.src-fixtures td.fixture-time{display:block;min-width:0}.src-fixtures .fixture-date{font-size:11px}.src-fixtures .fixture-hour{display:block;margin-top:3px;font-size:10px}}
+
+.daily-ten-panel{margin:0 0 22px}
+.daily-ten-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:14px}
+.daily-ten-heading h2,.daily-ten-empty h2{margin:5px 0}
+.daily-ten-heading p,.daily-ten-empty p{margin:6px 0 0;color:var(--muted);font-size:12px}
+.daily-ten-heading>strong{flex:0 0 auto;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2);font:800 18px Manrope}
+.daily-ten-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.daily-ten-pick{min-width:0;padding:12px;border:1px solid var(--line);border-radius:11px;background:var(--surface2)}
+.daily-ten-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px}
+.daily-ten-top b{font-size:11px;color:var(--muted)}
+.daily-ten-top strong{color:var(--accent);font:800 15px Manrope}
+.daily-ten-fixture{display:block;color:var(--text);font-size:13px;font-weight:800;text-decoration:none}
+.daily-ten-fixture:hover{color:var(--accent)}
+.daily-ten-selection{display:inline-flex;margin:8px 0 7px;padding:5px 9px;border-radius:7px;background:var(--surface3);font-size:12px;font-weight:800}
+.daily-ten-pick>small,.daily-ten-disclaimer{display:block;color:var(--muted);font-size:10px;line-height:1.5}
+.daily-ten-disclaimer{margin-top:12px}
+.daily-ten-empty{margin:0 0 22px}
+.daily-ten-empty>strong{display:inline-block;margin-top:8px;color:var(--accent);font-size:13px}
+@media(max-width:700px){.daily-ten-grid{grid-template-columns:1fr}.daily-ten-heading{align-items:flex-start}.daily-ten-heading>strong{font-size:15px;padding:8px 10px}}
+
+
+/* Mobile header: keep the account action visible in the top-right corner. */
+@media(max-width:700px){
+ .src-header{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  grid-template-areas:"brand actions" "nav nav";
+  align-items:center;
+  gap:9px 10px;
+  padding:9px 11px;
+ }
+ .src-brand{grid-area:brand;min-width:0}
+ .src-brand-copy strong{font-size:19px}
+ .src-brand-copy small{font-size:9px}
+ .src-header-actions{
+  grid-area:actions;
+  display:flex!important;
+  align-items:center;
+  justify-self:end;
+  align-self:center;
+  margin:0!important;
+  gap:6px;
+ }
+ .src-header-actions form{display:flex;margin:0}
+ .src-user{display:none}
+ .src-header-actions .src-login{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:78px;
+  min-height:40px;
+  padding:8px 12px;
+  border:1px solid var(--accent);
+  border-radius:9px;
+  background:var(--accent);
+  color:#14220b!important;
+  font-size:12px;
+  font-weight:850;
+  white-space:nowrap;
+  box-shadow:0 2px 8px #00000012;
+ }
+ .src-nav{
+  grid-area:nav;
+  order:initial;
+  flex:initial;
+  width:100%;
+  min-width:0;
+  justify-content:flex-start;
+  overflow-x:auto;
+  padding-bottom:2px;
+ }
+ .src-nav a{flex:0 0 auto}
+}
+
+/* Improve legibility of fixture cards and secondary labels on small screens. */
+@media(max-width:700px){
+ .src-fixtures tbody tr{color:var(--text)}
+ .src-fixtures td,
+ .src-fixtures td b,
+ .src-fixtures td span,
+ .src-fixtures .team-pair,
+ .src-fixtures .team-pair b,
+ .src-fixtures .fixture-date,
+ .src-fixtures .fixture-hour,
+ .src-fixtures .fixture-detail-link{
+  color:var(--text)!important;
+  opacity:1!important;
+ }
+ .src-fixtures .fixture-hour,
+ .src-fixtures td:nth-child(2){color:var(--muted)!important}
+ .src-fixtures .fixture-detail-link{font-weight:850;text-decoration:underline;text-underline-offset:2px}
+ .live-featured-teams strong,
+ .live-featured-score small,
+ .live-featured-events>span,
+ .live-featured>a{opacity:1;color:var(--text)}
+ .live-featured-teams strong{font-weight:800}
+ .daily-ten-pick>small,.daily-ten-disclaimer{color:var(--text);opacity:.9}
+ .src-header-actions .src-login{opacity:1}
+}
