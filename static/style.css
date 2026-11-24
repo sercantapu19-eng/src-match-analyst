@@ -400,3 +400,23 @@ label,.muted,small{color:var(--muted)}
 .result-outcome.result-lost .result-outcome-icon{background:#fdeaea;color:#c62828}
 .result-outcome.result-pending{color:#9a6700}
 .result-outcome.result-pending .result-outcome-icon{background:#fff3cd;color:#9a6700}
+
+/* Search the visible fixture bulletin by either team name. */
+.fixtures-panel-head{gap:14px}
+.fixtures-panel-tools{display:flex;align-items:center;justify-content:flex-end;gap:12px;min-width:0}
+.fixture-search{display:flex;align-items:center;gap:8px;min-width:min(290px,36vw);padding:0 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface2);color:var(--muted)}
+.fixture-search>span{font-size:20px;line-height:1}
+.fixture-search input{width:100%;min-width:0;padding:10px 0;border:0!important;outline:0;background:transparent!important;color:var(--text)!important;font-size:12px}
+.fixture-search input::placeholder{color:var(--muted);opacity:1}
+.fixture-search-status{margin:0;padding:5px 18px 9px;color:var(--muted);font-size:10px}
+.fixture-search-empty{margin:12px;padding:12px;border:1px dashed var(--line);border-radius:9px;color:var(--muted);font-size:12px;text-align:center}
+.src-fixtures tr[hidden],.src-fixtures[hidden],.fixture-search-empty[hidden]{display:none!important}
+@media(max-width:700px){
+ .fixtures-panel-head{align-items:stretch;flex-direction:column;gap:9px;padding:12px}
+ .fixtures-panel-tools{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+ .fixture-search{min-width:0;width:100%;padding:0 9px}
+ .fixture-search input{font-size:12px;min-height:38px}
+ .fixture-live-label{align-self:center;font-size:10px;white-space:nowrap;color:var(--muted)}
+ .fixture-search-status{padding:2px 12px 7px;font-size:10px}
+ .fixture-search-empty{margin:8px;font-size:11px}
+}
