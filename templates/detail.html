@@ -68,6 +68,46 @@
 </script>
 {% endif %}
 
+<section class="panel odds-panel" id="matchOdds" data-match-id="{{m.id}}" data-match-status="{{m.status}}">
+ <div class="odds-heading"><div><h2>Bahis Oranları</h2><p class="muted">Bahis şirketlerinden alınan gerçek oranlar · API-Football</p></div><span class="odds-live-dot">● CANLI ORAN</span></div>
+ <div class="odds-legend"><span>İlk yakalanan maç önü</span><span>Son maç önü</span><span>Canlı</span></div>
+ <div id="oddsContent"><p class="muted">Bahis oranları kontrol ediliyor…</p></div>
+ <p class="muted odds-foot" id="oddsStatus">Oranlar sağlayıcıdan gelir; model tahmini veya üretilmiş fiyat değildir.</p>
+ <p class="muted odds-foot">Not: İlk kaydedilen oran, sistemin ilk yakaladığı maç önü oranıdır; bahis şirketinin resmî açılış oranı olduğu varsayılmaz.</p>
+</section>
+<style>
+.odds-panel{overflow:hidden}.odds-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.odds-heading h2{margin:0}.odds-heading p{margin:5px 0 0}.odds-live-dot{font-size:.72rem;font-weight:800;color:#ef6464}.odds-legend{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0;font-size:.76rem;color:var(--muted)}.odds-legend span:before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#94a3b8;margin-right:5px}.odds-legend span:nth-child(2):before{background:#3985ec}.odds-legend span:nth-child(3):before{background:#22c55e}.odds-table-wrap{overflow-x:auto}.odds-table{width:100%;border-collapse:collapse;min-width:520px;font-size:.83rem}.odds-table th,.odds-table td{padding:9px 7px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}.odds-table th{color:var(--muted);font-size:.75rem}.odds-table td:nth-child(n+3){font-weight:800;font-variant-numeric:tabular-nums}.odds-bookmaker{font-weight:800}.odds-empty{padding:16px 0;text-align:center}.odds-foot{font-size:.76rem;margin:8px 0 0}
+</style>
+<script>
+(()=> {
+ const root=document.getElementById("matchOdds");if(!root)return;
+ const id=root.dataset.matchId,content=document.getElementById("oddsContent"),status=document.getElementById("oddsStatus");
+ const esc=v=>String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+ const key=x=>[x.bookmaker_id,x.market_id,x.selection,x.handicap].join("|");
+ const render=data=>{
+  if(!data.configured){content.innerHTML='<p class="odds-empty muted">'+esc(data.message||"Oran sağlayıcısı yapılandırılmadı.")+'</p>';return;}
+  const first=new Map((data.first_seen||[]).map(x=>[key(x),x]));
+  const pre=new Map((data.prematch||[]).map(x=>[key(x),x]));
+  const live=new Map((data.live||[]).map(x=>[key(x),x]));
+  const all=new Map();
+  [first,pre,live].forEach(m=>m.forEach((v,k)=>all.set(k,v)));
+  if(!all.size){content.innerHTML='<p class="odds-empty muted">Bu karşılaşma için henüz doğrulanmış bahis oranı bulunamadı.</p>';status.textContent=data.message||"Maç eşleşmesi ve sağlayıcı kapsamı kontrol ediliyor.";return;}
+  const rows=Array.from(all.keys()).map(k=>({k,first:first.get(k),pre:pre.get(k),live:live.get(k)}))
+   .sort((a,b)=>String((a.pre||a.live||a.first).bookmaker).localeCompare(String((b.pre||b.live||b.first).bookmaker))||String((a.pre||a.live||a.first).market).localeCompare(String((b.pre||b.live||b.first).market)));
+  const cell=(x)=>!x?"—":(x.suspended?"Askıda":esc(x.odd));
+  content.innerHTML='<div class="odds-table-wrap"><table class="odds-table"><thead><tr><th>Bahis şirketi</th><th>Pazar / Seçim</th><th>İlk yakalanan</th><th>Maç önü</th><th>Canlı</th></tr></thead><tbody>'+
+   rows.slice(0,100).map(r=>{const x=r.pre||r.live||r.first;return '<tr><td class="odds-bookmaker">'+esc(x.bookmaker)+'</td><td>'+esc(x.market)+' · '+esc(x.selection)+(x.handicap?' ('+esc(x.handicap)+')':'')+'</td><td>'+cell(r.first)+'</td><td>'+cell(r.pre)+'</td><td>'+cell(r.live)+'</td></tr>';}).join("")+
+   '</tbody></table></div>';
+  status.textContent=(data.last_updated?'Son oran değişikliği kaydı: '+new Date(data.last_updated).toLocaleString('tr-TR'):'')+(data.message?' · '+data.message:'');
+ };
+ let busy=false;
+ async function refresh(){if(busy||document.visibilityState==="hidden")return;busy=true;try{const r=await fetch('/match/'+id+'/odds-data',{cache:'no-store'});const data=await r.json();if(!r.ok)throw new Error(data.error||"Oran verisi alınamadı.");render(data);}catch(e){status.textContent="Oran sağlayıcısına geçici olarak ulaşılamıyor; kayıtlı oranlar korunuyor.";}finally{busy=false;}}
+ refresh();
+ window.setInterval(refresh,root.dataset.matchStatus==="live"?15000:60000);
+ document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")refresh();});
+})();
+</script>
+
 {% if m.saved %}<form method="post" action="/match/{{m.id}}/unsave"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button secondary">★ Kaydedildi</button></form>{% else %}<form method="post" action="/match/{{m.id}}/save"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">☆ Seçimlerime kaydet</button></form>{% endif %}
 <section class="panel"><h2>Tahminlerimiz · Tüm pazarlar</h2>
 {% if market_probabilities and market_probabilities.get('match_result') %}

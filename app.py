@@ -4,6 +4,7 @@ from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from football_provider import FootballProvider, ProviderError
+from odds_provider import ApiFootballOddsProvider, OddsProviderError
 from prediction_engine import predict, prepare_history
 from auth import auth_bp, current_user_id, init_auth_db, login_required, admin_required, is_admin_user
 from result_sync import actual_market_values, evaluate_prediction, prefer_saved_match, matching_fixture_rows
@@ -261,6 +262,15 @@ def init_db():
     raw_meta TEXT DEFAULT '{}',first_seen_at TEXT NOT NULL,last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
     UNIQUE(match_id,event_uid))""")
    c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+   c.execute("""CREATE TABLE IF NOT EXISTS match_odds_fixture_map(
+    match_id BIGINT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,provider_fixture_id BIGINT NOT NULL,
+    home_name TEXT DEFAULT '',away_name TEXT DEFAULT '',matched_at TEXT NOT NULL,provider TEXT DEFAULT 'api-football')""")
+   c.execute("""CREATE TABLE IF NOT EXISTS match_odds_snapshots(
+    id BIGSERIAL PRIMARY KEY,match_id BIGINT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,bookmaker_id TEXT DEFAULT '',bookmaker_name TEXT DEFAULT '',
+    market_id TEXT DEFAULT '',market_name TEXT DEFAULT '',selection TEXT DEFAULT '',handicap TEXT DEFAULT '',
+    odd TEXT NOT NULL,suspended BOOLEAN DEFAULT FALSE,captured_at TEXT NOT NULL,raw_meta TEXT DEFAULT '{}')""")
+   c.execute("CREATE INDEX IF NOT EXISTS idx_match_odds_timeline ON match_odds_snapshots(match_id,source,captured_at)")
    c.execute("CREATE INDEX IF NOT EXISTS idx_match_live_state_status ON match_live_state(status)")
   migration=migrate_legacy_sqlite_to_postgres()
   if migration["status"] == "legacy_file_not_found":
@@ -304,6 +314,17 @@ def init_db():
    last_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
    FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE,UNIQUE(match_id,event_uid))""")
   c.execute("CREATE INDEX IF NOT EXISTS idx_match_events_timeline ON match_events(match_id,sort_key,id)")
+  c.execute("""CREATE TABLE IF NOT EXISTS match_odds_fixture_map(
+   match_id INTEGER PRIMARY KEY,provider_fixture_id INTEGER NOT NULL,home_name TEXT DEFAULT '',
+   away_name TEXT DEFAULT '',matched_at TEXT NOT NULL,provider TEXT DEFAULT 'api-football',
+   FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
+  c.execute("""CREATE TABLE IF NOT EXISTS match_odds_snapshots(
+   id INTEGER PRIMARY KEY AUTOINCREMENT,match_id INTEGER NOT NULL,source TEXT NOT NULL,
+   bookmaker_id TEXT DEFAULT '',bookmaker_name TEXT DEFAULT '',market_id TEXT DEFAULT '',
+   market_name TEXT DEFAULT '',selection TEXT DEFAULT '',handicap TEXT DEFAULT '',
+   odd TEXT NOT NULL,suspended INTEGER DEFAULT 0,captured_at TEXT NOT NULL,raw_meta TEXT DEFAULT '{}',
+   FOREIGN KEY(match_id) REFERENCES matches(id) ON DELETE CASCADE)""")
+  c.execute("CREATE INDEX IF NOT EXISTS idx_match_odds_timeline ON match_odds_snapshots(match_id,source,captured_at)")
   c.execute("CREATE INDEX IF NOT EXISTS idx_match_live_state_status ON match_live_state(status)")
 
 
@@ -1611,6 +1632,145 @@ def detail(mid):
   market_probabilities=json.loads(m["market_probabilities"] or "{}")
  if not m:return "Maç bulunamadı",404
  return render_template("detail.html",m=m,results=rs,markets=MARKETS,confidence=confidence,market_probabilities=market_probabilities)
+
+def _store_match_odds(match_id, rows):
+ now=_utc_iso()
+ with db() as conn:
+  for item in rows:
+   key=(match_id,item["source"],item["bookmaker_id"],item["market_id"],
+        item["selection"],item["handicap"])
+   previous=conn.execute("""SELECT odd,suspended FROM match_odds_snapshots
+    WHERE match_id=? AND source=? AND bookmaker_id=? AND market_id=? AND selection=? AND handicap=?
+    ORDER BY id DESC LIMIT 1""",key).fetchone()
+   if previous and str(previous["odd"])==str(item["odd"]) and bool(previous["suspended"])==bool(item["suspended"]):
+    continue
+   conn.execute("""INSERT INTO match_odds_snapshots(match_id,source,bookmaker_id,bookmaker_name,
+    market_id,market_name,selection,handicap,odd,suspended,captured_at,raw_meta)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(
+     match_id,item["source"],item["bookmaker_id"],item["bookmaker"],item["market_id"],
+     item["market"],item["selection"],item["handicap"],item["odd"],item["suspended"],
+     item["captured_at"],json.dumps(item.get("raw") or {},ensure_ascii=False)))
+
+
+def _claim_odds_poll(poll_key, cache_seconds):
+ now_dt=datetime.now(timezone.utc)
+ now=_utc_iso(now_dt)
+ lease=_utc_iso(now_dt+timedelta(seconds=20))
+ with db() as conn:
+  conn.execute("INSERT OR IGNORE INTO provider_poll_state(poll_key) VALUES(?)",(poll_key,))
+  state=conn.execute("SELECT fetched_at,lease_until,last_error FROM provider_poll_state WHERE poll_key=?",(poll_key,)).fetchone()
+  if state and state["last_error"]:
+   if _is_cache_fresh(state["fetched_at"],60,now_dt):
+    return False
+  elif state and _is_cache_fresh(state["fetched_at"],cache_seconds,now_dt):
+   return False
+  updated=conn.execute("""UPDATE provider_poll_state SET lease_until=?
+   WHERE poll_key=? AND (lease_until IS NULL OR lease_until < ?)""",(lease,poll_key,now))
+  return updated.rowcount>0
+
+
+def _finish_odds_poll(poll_key, error=""):
+ with db() as conn:
+  conn.execute("UPDATE provider_poll_state SET fetched_at=?,lease_until=NULL,last_error=? WHERE poll_key=?",
+   (_utc_iso(),str(error or "")[:500],poll_key))
+
+
+def _latest_odds_rows(match_id, source, earliest=False):
+ comparator="<" if earliest else ">"
+ ordering="ASC" if earliest else "DESC"
+ with db() as conn:
+  rows=conn.execute(f"""SELECT s.* FROM match_odds_snapshots s
+   WHERE s.match_id=? AND s.source=?
+   AND NOT EXISTS(SELECT 1 FROM match_odds_snapshots n
+    WHERE n.match_id=s.match_id AND n.source=s.source
+    AND n.bookmaker_id=s.bookmaker_id AND n.market_id=s.market_id
+    AND n.selection=s.selection AND n.handicap=s.handicap AND n.id {comparator} s.id)
+   ORDER BY s.bookmaker_name,s.market_name,s.selection""",(match_id,source)).fetchall()
+ return [dict(row) for row in rows]
+
+
+def _refresh_global_live_odds(provider):
+ """Fetch one shared in-play feed and fan it out to every mapped live fixture."""
+ poll_key="api_football_odds_live_global"
+ poll_seconds=max(5,min(60,int(os.environ.get("ODDS_LIVE_POLL_SECONDS","15") or "15")))
+ if not _claim_odds_poll(poll_key,poll_seconds):
+  return ""
+ try:
+  rows=provider.live_odds()
+  with db() as conn:
+   mappings=conn.execute("""SELECT x.match_id,x.provider_fixture_id FROM match_odds_fixture_map x
+    JOIN matches m ON m.id=x.match_id WHERE m.status='live'""").fetchall()
+  by_fixture={str(row["provider_fixture_id"]):int(row["match_id"]) for row in mappings}
+  grouped={}
+  for item in rows:
+   match_id=by_fixture.get(str(item.get("fixture_id") or ""))
+   if match_id is not None:
+    grouped.setdefault(match_id,[]).append(item)
+  for match_id,items in grouped.items():
+   _store_match_odds(match_id,items)
+  _finish_odds_poll(poll_key)
+  return ""
+ except Exception as exc:
+  _finish_odds_poll(poll_key,str(exc))
+  return str(exc)
+
+
+@app.get("/match/<int:mid>/odds-data")
+def match_odds_data(mid):
+ """Return timestamped bookmaker odds; never substitute model predictions for prices."""
+ with db() as conn:
+  row=conn.execute("SELECT id,home,away,kickoff,status FROM matches WHERE id=?",(mid,)).fetchone()
+  mapping=conn.execute("SELECT provider_fixture_id FROM match_odds_fixture_map WHERE match_id=?",(mid,)).fetchone()
+ if not row:
+  return jsonify({"error":"Maç bulunamadı."}),404
+ match=dict(row)
+ provider=ApiFootballOddsProvider()
+ if not provider.configured:
+  return jsonify({"configured":False,"provider":"API-Football","message":"Oran sağlayıcısı henüz yapılandırılmadı. Render ortamına API_FOOTBALL_KEY eklenmeli.","first_seen":[],"prematch":[],"live":[]})
+ error=""
+ fixture_id=mapping["provider_fixture_id"] if mapping else None
+ try:
+  if not fixture_id:
+   map_key=f"api_football_odds_fixture_map_{mid}"
+   if _claim_odds_poll(map_key,21600):
+    try:
+     resolved=provider.resolve_fixture(match)
+     fixture_id=resolved["fixture_id"]
+     with db() as conn:
+      conn.execute("""INSERT INTO match_odds_fixture_map(match_id,provider_fixture_id,home_name,away_name,matched_at,provider)
+       VALUES(?,?,?,?,?,'api-football') ON CONFLICT(match_id) DO UPDATE SET
+       provider_fixture_id=excluded.provider_fixture_id,home_name=excluded.home_name,
+       away_name=excluded.away_name,matched_at=excluded.matched_at,provider=excluded.provider""",
+       (mid,fixture_id,resolved["home"],resolved["away"],_utc_iso()))
+     _finish_odds_poll(map_key)
+    except Exception as exc:
+     _finish_odds_poll(map_key,str(exc))
+     error=str(exc)
+   else:
+    error="Bu maç için sağlayıcı fikstür eşleşmesi bekleniyor; tekrar deneme aralığı uygulanıyor."
+  if fixture_id and match.get("status") in ("scheduled","live","finished"):
+   pre_key=f"api_football_odds_prematch_{mid}"
+   if _claim_odds_poll(pre_key,10800):
+    try:
+     _store_match_odds(mid,provider.pre_match_odds(fixture_id))
+     _finish_odds_poll(pre_key)
+    except Exception as exc:
+     _finish_odds_poll(pre_key,str(exc))
+     error=str(exc)
+  if fixture_id and match.get("status")=="live":
+   live_error=_refresh_global_live_odds(provider)
+   if live_error:
+    error=live_error
+ except OddsProviderError as exc:
+  error=str(exc)
+ first_seen=_latest_odds_rows(mid,"prematch",earliest=True)
+ prematch=_latest_odds_rows(mid,"prematch")
+ live=_latest_odds_rows(mid,"live")
+ last_seen=max([x["captured_at"] for x in first_seen+prematch+live],default="")
+ message=error or ("Henüz oran teklifi dönmedi; sağlayıcı kapsamı ve maç eşleşmesi kontrol edilmeli." if not (first_seen or prematch or live) else "")
+ return jsonify({"configured":True,"provider":"API-Football","fixture_id":fixture_id,
+  "first_seen":first_seen,"prematch":prematch,"live":live,"last_updated":last_seen,"message":message})
+
 
 @app.get("/match/<int:mid>/live-data")
 def match_live_data(mid):
