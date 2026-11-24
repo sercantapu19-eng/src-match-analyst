@@ -6,6 +6,7 @@ BASE_URL = "https://sportscore.com/api/v1/fixtures/"
 SEARCH_URL = "https://sportscore.com/api/v1/search/"
 TEAM_URL = "https://sportscore.com/api/widget/team/"
 LIVE_MATCHES_URL = "https://sportscore.com/api/widget/matches/"
+MATCH_DETAIL_URL = "https://sportscore.com/api/widget/match/"
 
 class ProviderError(Exception):
     pass
@@ -451,6 +452,82 @@ class FootballProvider:
             fixture for fixture in self.parse_fixtures_payload(payload)
             if self.is_current_live_fixture(fixture)
         ]
+
+
+    @staticmethod
+    def parse_match_events(payload):
+        """Normalize the event timeline from SportScore's single-match response."""
+        keys = {"events", "timeline", "incidents", "match_events", "matchEvents"}
+        rows = []
+        def walk(value, depth=0):
+            if depth > 6: return
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if str(key).casefold() in keys and isinstance(child, list):
+                        rows.extend(item for item in child if isinstance(item, dict))
+                    elif isinstance(child, (dict, list)):
+                        walk(child, depth + 1)
+            elif isinstance(value, list):
+                for child in value:
+                    if isinstance(child, (dict, list)): walk(child, depth + 1)
+        walk(payload)
+        output, seen = [], set()
+        for item in rows:
+            raw = str(FootballProvider.pick(item, "type", "event_type", "eventType", "incident", "kind", "name", "title", default="")).strip()
+            detail = str(FootballProvider.pick(item, "detail", "description", "comment", "label", "sub_type", "subType", default="")).strip()
+            value = (raw + " " + detail).casefold().replace("_", " ").replace("-", " ")
+            if "corner" in value or "korner" in value: kind,label,icon="corner","Korner","🚩"
+            elif "offside" in value or "ofsayt" in value: kind,label,icon="offside","Ofsayt","🚫"
+            elif any(x in value for x in ("substitution","substitute","oyuncu değiş")): kind,label,icon="substitution","Oyuncu değişikliği","🔄"
+            elif any(x in value for x in ("red card","red_card","kırmızı kart")): kind,label,icon="red_card","Kırmızı kart","🟥"
+            elif any(x in value for x in ("yellow","yellow_card","sarı kart")): kind,label,icon="yellow_card","Sarı kart","🟨"
+            elif any(x in value for x in ("var","cancelled","iptal")): kind,label,icon="var","VAR kararı","📺"
+            elif any(x in value for x in ("half time","halftime","devre arası")): kind,label,icon="halftime","İlk yarı sona erdi","⏸️"
+            elif any(x in value for x in ("second half","2nd half","ikinci yarı başladı")): kind,label,icon="second_half","İkinci yarı başladı","▶️"
+            elif any(x in value for x in ("full time","fulltime","maç sona erdi")): kind,label,icon="fulltime","Maç sona erdi","🏁"
+            elif any(x in value for x in ("first half","1st half","maç başladı")): kind,label,icon="kickoff","Maç başladı","🕐"
+            elif "goal" in value or "gol" in value or "penalty scored" in value: kind,label,icon="goal","Gol","⚽"
+            else: continue
+            raw_minute=FootballProvider.pick(item,"minute","time","elapsed","elapsed_minute","elapsedTime","time_elapsed","display",default="")
+            minute=FootballProvider.elapsed_minute({"elapsed":raw_minute}) if raw_minute not in (None,"") else ""
+            if minute is None: minute=raw_minute if isinstance(raw_minute,(int,float,str)) else ""
+            extra=FootballProvider.pick(item,"extra_minute","added_time","injury_time")
+            if extra not in (None,"",0,"0") and minute not in (None,"") and "+" not in str(minute): minute=f"{minute}+{extra}"
+            player=FootballProvider.pick(item,"player","player_name","playerName",default="")
+            if isinstance(player,dict): player=FootballProvider.pick(player,"name","display_name",default="")
+            assist=FootballProvider.pick(item,"assist","assist_player","assistName",default="")
+            if isinstance(assist,dict): assist=FootballProvider.pick(assist,"name",default="")
+            team=FootballProvider.pick(item,"team","team_name","teamName",default="")
+            if isinstance(team,dict): team=FootballProvider.pick(team,"name","short_name",default="")
+            incoming=FootballProvider.pick(item,"player_in","playerIn","in_player","sub_in",default="")
+            outgoing=FootballProvider.pick(item,"player_out","playerOut","out_player","sub_out",default="")
+            if isinstance(incoming,dict): incoming=FootballProvider.pick(incoming,"name",default="")
+            if isinstance(outgoing,dict): outgoing=FootballProvider.pick(outgoing,"name",default="")
+            if kind=="substitution" and (incoming or outgoing): detail=f"↓ {outgoing}  ↑ {incoming}".strip()
+            elif player: detail=str(player)+(f" · Asist: {assist}" if assist else "")
+            identity=(str(minute),kind,str(player),str(team),str(detail))
+            if identity in seen: continue
+            seen.add(identity)
+            output.append({"minute":str(minute),"minute_label":f"{minute}'" if minute not in (None,"") else "—",
+                "kind":kind,"label":label,"icon":icon,"detail":detail,"team":str(team or "")})
+        def order(event):
+            base=str(event["minute"]).split("+",1)[0]
+            return (int(base) if base.isdigit() else 999, 1 if "+" in str(event["minute"]) else 0)
+        return sorted(output,key=order)
+
+    def match_detail(self, slug):
+        """Fetch one match's details and official event timeline."""
+        if not slug: return {}
+        try:
+            response=self.session.get(MATCH_DETAIL_URL,params={"sport":"football","slug":str(slug)},timeout=10)
+        except requests.RequestException as exc:
+            raise ProviderError(f"SportScore maç detay bağlantı hatası: {exc}") from exc
+        if response.status_code==429: raise ProviderError("SportScore maç detay istek sınırı doldu.")
+        if response.status_code in (401,403): raise ProviderError("SportScore maç detay erişimi reddedildi.")
+        if not response.ok: raise ProviderError(f"SportScore maç detay HTTP {response.status_code}.")
+        try: payload=response.json()
+        except ValueError as exc: raise ProviderError("SportScore maç detay yanıtı geçerli JSON değil.") from exc
+        return payload if isinstance(payload,dict) else {}
 
     def team_fixtures_for_team(self, team_name, limit=30):
         """Fetch up to 30 recent/upcoming fixtures for one named club."""

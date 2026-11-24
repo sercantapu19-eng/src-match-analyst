@@ -1039,6 +1039,39 @@ def detail(mid):
   market_probabilities=json.loads(m["market_probabilities"] or "{}")
  if not m:return "Maç bulunamadı",404
  return render_template("detail.html",m=m,results=rs,markets=MARKETS,confidence=confidence,market_probabilities=market_probabilities)
+
+@app.get("/match/<int:mid>/live-data")
+def match_live_data(mid):
+ # Read-only endpoint: never modifies matches, saved selections, or result records.
+ with db() as c:
+  row=c.execute("SELECT id,status,status_short,elapsed_minute,home_goals,away_goals,ht_home,ht_away,external_id FROM matches WHERE id=?",(mid,)).fetchone()
+ if not row: return jsonify({"error":"Maç bulunamadı."}),404
+ match=dict(row)
+ if match["status"]!="live":
+  return jsonify({"status":match["status"],"events":[],"minute":match["elapsed_minute"]})
+ try:
+  provider=FootballProvider(os.environ.get("SPORTSCORE_API_KEY"))
+  payload=provider.match_detail(match.get("external_id"))
+  events=provider.parse_match_events(payload)
+  fixtures=provider.parse_fixtures_payload(payload)
+  fixture=fixtures[0] if fixtures else {}
+  minute=fixture.get("elapsed_minute") or match.get("elapsed_minute")
+  code=str(fixture.get("status_short") or match.get("status_short") or "").upper()
+  period="halftime" if code in ("HT","INT","BREAK","BT") else "finished" if code in ("FT","AET","PEN") else "second_half" if code in ("2H","2ND_HALF") else "first_half" if code in ("1H","1ST_HALF") else "live"
+  hg,ag=fixture.get("home_goals"),fixture.get("away_goals")
+  hh,ha=fixture.get("ht_home"),fixture.get("ht_away")
+  return jsonify({"status":period,"minute":minute,
+   "minute_label":"Devre Arası" if period=="halftime" else "Maç Tamamlandı" if period=="finished" else
+    (f"{minute}' · {'2. Yarı' if period=='second_half' else '1. Yarı' if period=='first_half' else 'Canlı'}" if minute is not None else
+     ("2. Yarı" if period=="second_half" else "1. Yarı" if period=="first_half" else "Canlı dakika bekleniyor")),
+   "score":f"{hg} – {ag}" if hg is not None and ag is not None else (f"{match['home_goals']} – {match['away_goals']}" if match["home_goals"] is not None else None),
+   "ht_score":f"{hh} – {ha}" if hh is not None and ha is not None else (f"{match['ht_home']} – {match['ht_away']}" if match["ht_home"] is not None else None),
+   "events":events,"events_available":bool(events)})
+ except ProviderError as exc:
+  app.logger.warning("Live detail unavailable for match %s: %s",mid,exc)
+  return jsonify({"status":"unavailable","minute":match.get("elapsed_minute"),"events":[],
+   "events_available":False,"message":"Canlı olay verisi şu anda alınamıyor."}),502
+
 @app.post("/match/<int:mid>/status")
 @admin_required
 def status(mid):
