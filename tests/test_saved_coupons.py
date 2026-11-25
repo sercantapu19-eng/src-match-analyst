@@ -52,4 +52,30 @@ class SavedCouponTests(unittest.TestCase):
         page=self.client.get("/coupon/draft").get_data(as_text=True)
         self.assertEqual(page.count("Alpha FC"),1)
 
+
+    def test_saved_list_shows_only_clickable_coupons_and_detail_route(self):
+        self.login(self.user_one)
+        self.add(self.match_one,"match_result","1")
+        self.client.post("/coupon/save",data={"csrf_token":"coupon-test-token","name":"Detay Testi"},
+            headers={"X-CSRF-Token":"coupon-test-token"})
+        listing=self.client.get("/saved")
+        self.assertEqual(listing.status_code,200)
+        html=listing.get_data(as_text=True)
+        self.assertIn('href="/coupon/',html)
+        self.assertIn("Detay Testi",html)
+        self.assertNotIn("Eski kayıtların",html)
+        detail=self.client.get("/coupon/1")
+        self.assertEqual(detail.status_code,200)
+        detail_html=detail.get_data(as_text=True)
+        self.assertIn("Alpha FC",detail_html)
+        self.assertIn("MS 1",detail_html)
+
+    def test_user_cannot_open_another_users_coupon(self):
+        self.login(self.user_one)
+        self.add(self.match_one,"match_result","1")
+        self.client.post("/coupon/save",data={"csrf_token":"coupon-test-token","name":"Private"},
+            headers={"X-CSRF-Token":"coupon-test-token"})
+        self.login(self.user_two)
+        self.assertEqual(self.client.get("/coupon/1").status_code,404)
+
 if __name__=="__main__": unittest.main()
