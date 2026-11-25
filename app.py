@@ -2131,6 +2131,31 @@ def saved():
  for row in rows: results_by_match.setdefault(row["match_id"],[]).append(dict(row))
  return render_template("saved.html",matches=ms,results_by_match=results_by_match,selected_predictions=selected,
   coupons=coupons,coupon_items=coupon_items)
+@app.route("/coupon/<int:coupon_id>")
+@login_required
+def coupon_detail(coupon_id):
+ with db() as c:
+  coupon=c.execute("SELECT * FROM user_coupons WHERE id=? AND user_id=? AND status='saved'",
+   (coupon_id,current_user_id())).fetchone()
+  if not coupon:
+   return "Kupon bulunamadı",404
+  items=c.execute("""SELECT i.id AS item_id,m.id,m.home,m.away,m.league,m.kickoff,m.status,
+    m.home_goals,m.away_goals,m.ht_home,m.ht_away,i.market_key,i.selection_key,
+    r.outcome,r.actual,r.prediction
+    FROM user_coupon_items i JOIN matches m ON m.id=i.match_id
+    LEFT JOIN results r ON r.match_id=m.id AND r.market=CASE i.market_key
+     WHEN 'match_result' THEN 'Maç Sonucu' WHEN 'goals' THEN '2,5 Gol' WHEN 'btts' THEN 'KG'
+     WHEN 'htft' THEN 'İY/MS' WHEN 'first_half_btts' THEN '1. Yarı KG'
+     WHEN 'second_half_btts' THEN '2. Yarı KG' ELSE '' END
+    WHERE i.coupon_id=? ORDER BY i.id""",(coupon_id,)).fetchall()
+ total=len(items)
+ settled=sum(1 for item in items if item["outcome"] in ("won","lost"))
+ won=sum(1 for item in items if item["outcome"]=="won")
+ lost=sum(1 for item in items if item["outcome"]=="lost")
+ return render_template("coupon_detail.html",coupon=coupon,items=items,total=total,
+  settled=settled,won=won,lost=lost)
+
+
 def _goal_side_label(market, selection):
  """Hide repeated goal-line value in selection labels on the results screen."""
  market_key="".join(str(market or "").casefold().replace(",",".").split())
