@@ -35,14 +35,13 @@ jobs:
       - name: Allow Render auto-deploy to finish after a push
         if: github.event_name == 'push'
         run: sleep 75
-      - name: Refresh yesterday's results and today's fixtures
+      - name: Refresh recent results and next seven days of fixtures
         env:
           SYNC_TOKEN: ${{ secrets.RESULT_SYNC_TOKEN }}
         run: |
           TODAY="$(TZ=Europe/Istanbul date +%F)"
-          YESTERDAY="$(TZ=Europe/Istanbul date -d '1 day ago' +%F)"
-
-          for DAY in "$YESTERDAY" "$TODAY"; do
+          for OFFSET in -1 0 1 2 3 4 5 6 7; do
+            DAY="$(TZ=Europe/Istanbul date -d "$TODAY $OFFSET days" +%F)"
             echo "Refreshing fixtures and results for $DAY"
             curl --fail-with-body --silent --show-error \
               --retry 0 --max-time 90 \
@@ -52,21 +51,25 @@ jobs:
               --data '{}'
             echo
           done
-      - name: Generate today's missing predictions in bounded batches
+      - name: Generate missing predictions for today and next seven days
         env:
           SYNC_TOKEN: ${{ secrets.RESULT_SYNC_TOKEN }}
         run: |
           TODAY="$(TZ=Europe/Istanbul date +%F)"
-          for BATCH in $(seq 1 30); do
-            RESPONSE="$(curl --fail-with-body --silent --show-error \
-              --retry 0 --max-time 90 \
-              -X POST "https://src-match-analyst.onrender.com/sync/predictions/refresh?date=$TODAY&limit=8" \
-              -H "Authorization: Bearer $SYNC_TOKEN" \
-              -H "Content-Type: application/json" \
-              --data '{}')"
-            echo "$RESPONSE"
-            REMAINING="$(printf '%s' "$RESPONSE" | jq -r '.remaining // 0')"
-            if [ "$REMAINING" -eq 0 ]; then
-              break
-            fi
+          for OFFSET in 0 1 2 3 4 5 6 7; do
+            DAY="$(TZ=Europe/Istanbul date -d "$TODAY $OFFSET days" +%F)"
+            echo "Generating predictions for $DAY"
+            for BATCH in $(seq 1 30); do
+              RESPONSE="$(curl --fail-with-body --silent --show-error \
+                --retry 0 --max-time 90 \
+                -X POST "https://src-match-analyst.onrender.com/sync/predictions/refresh?date=$DAY&limit=8" \
+                -H "Authorization: Bearer $SYNC_TOKEN" \
+                -H "Content-Type: application/json" \
+                --data '{}')"
+              echo "$RESPONSE"
+              REMAINING="$(printf '%s' "$RESPONSE" | jq -r '.remaining // 0')"
+              if [ "$REMAINING" -eq 0 ]; then
+                break
+              fi
+            done
           done

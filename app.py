@@ -1090,8 +1090,8 @@ def refresh_results():
    target_date=date.fromisoformat(requested_day)
   except ValueError:
    return jsonify({"error":"Tarih YYYY-MM-DD biçiminde olmalı."}),400
-  if target_date < today-timedelta(days=14) or target_date > today:
-   return jsonify({"error":"Senkronizasyon tarihi son 14 gün ile bugün arasında olmalı."}),400
+  if target_date < today-timedelta(days=14) or target_date > today+timedelta(days=7):
+   return jsonify({"error":"Senkronizasyon tarihi son 14 gün ile gelecek 7 gün arasında olmalı."}),400
   days=[target_date.isoformat()]
  else:
   days=[(today-timedelta(days=offset)).isoformat() for offset in (2,1,0)]
@@ -1279,8 +1279,12 @@ def refresh_missing_predictions():
 
  today=datetime.now(ZoneInfo("Europe/Istanbul")).date()
  requested_day=(request.args.get("date") or today.isoformat()).strip()
- if requested_day!=today.isoformat():
-  return jsonify({"error":"Bu görev yalnızca bugünün yaklaşan maçlarını işler."}),400
+ try:
+  prediction_day=date.fromisoformat(requested_day)
+ except ValueError:
+  return jsonify({"error":"Tahmin tarihi YYYY-MM-DD biçiminde olmalı."}),400
+ if prediction_day < today or prediction_day > today+timedelta(days=7):
+  return jsonify({"error":"Tahmin görevi bugün ve gelecek 7 gün için çalışır."}),400
 
  try:
   limit=max(1,min(8,int(request.args.get("limit","8"))))
