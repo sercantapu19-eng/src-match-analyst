@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block content %}
 <nav class="detail-actions"><a class="button secondary" href="/coupon">← Kupon Analiz Merkezi</a><a class="button secondary" href="/saved">Kayıtlı Kuponlar</a></nav>
-<section class="hero"><div><div class="eyebrow">SRC MATCH ANALYST · KUPON OLUŞTUR</div><h1>Kupon Taslağım</h1><p>Farklı maçlardan istediğin bahis seçimlerini tek kuponda biriktir.</p></div><div class="stats"><div><b>{{items|length}}</b><small>Bahis seçimi</small></div></div></section>
+<section class="hero coupon-draft-hero"><div><div class="eyebrow">SRC MATCH ANALYST · KUPON OLUŞTUR</div><h1>Kupon Taslağım</h1><p>Farklı maçlardan istediğin bahis seçimlerini tek kuponda biriktir.</p></div><div class="stats"><div><b>{{items|length}}</b><small>Bahis seçimi</small></div></div></section>
 {% if items %}
 <section class="panel coupon-draft-list">
  {% for p in items %}
