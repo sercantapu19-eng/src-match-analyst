@@ -1,0 +1,40 @@
+{% extends "base.html" %}{% block content %}
+<nav class="detail-actions"><a class="button secondary" href="/saved">← Kayıtlı kuponlar</a><a class="button secondary" href="/coupon/draft">＋ Kupon oluştur</a></nav>
+<section class="hero coupon-detail-hero">
+ <div><div class="eyebrow">SRC MATCH ANALYST · KUPON DETAYI</div><h1>{{coupon.name}}</h1><p>Kuponundaki tüm maçlar ve bahis seçimleri.</p></div>
+ <div class="stats"><div><b>{{total}}</b><small>Bahis</small></div><div><b>{{won}}</b><small>Kazandı</small></div><div><b>{{lost}}</b><small>Kaybetti</small></div></div>
+</section>
+<style>
+.coupon-detail-list{display:grid;gap:12px}
+.coupon-detail-item{padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.coupon-detail-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.coupon-detail-teams{font-size:1.02rem;font-weight:850}
+.coupon-detail-sub{font-size:.82rem;color:var(--muted);margin-top:5px}
+.coupon-detail-selection{margin:13px 0;padding:12px;border-radius:10px;background:var(--surface2);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.coupon-detail-selection strong{color:var(--text)}
+.coupon-detail-result{font-weight:800}
+.coupon-detail-result.won{color:#22c55e}.coupon-detail-result.lost{color:#ef4444}.coupon-detail-result.pending{color:var(--muted)}
+.coupon-detail-score{font-weight:850;font-variant-numeric:tabular-nums}
+.coupon-detail-footer{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+</style>
+<section class="panel">
+ <div class="coupon-detail-top"><div><h2>Kupon özeti</h2><p class="muted">{{coupon.saved_at[:16] if coupon.saved_at else coupon.created_at[:16]}} · {{settled}} / {{total}} bahis sonuçlandı</p></div></div>
+ {% if total %}<div class="coupon-detail-list">
+ {% for p in items %}
+ <article class="coupon-detail-item">
+  <div class="coupon-detail-top">
+   <div><div class="coupon-detail-teams">{{p.home|team_display}} – {{p.away|team_display}}</div><div class="coupon-detail-sub">{{p.league}} · {{p.kickoff[:10] if p.kickoff else "—"}} {{p.kickoff[11:16] if p.kickoff and p.kickoff|length>=16 else ""}}</div></div>
+   <span class="coupon-detail-score">{% if p.home_goals is not none and p.away_goals is not none %}{{p.home_goals}} – {{p.away_goals}}{% else %}Skor bekleniyor{% endif %}</span>
+  </div>
+  <div class="coupon-detail-selection"><div><small class="muted">{{p.market_key|market_tr}}</small><br><strong>{{p.selection_key|selection_tr(p.market_key)}}</strong></div>
+   <div class="coupon-detail-result {% if p.outcome=='won' %}won{% elif p.outcome=='lost' %}lost{% else %}pending{% endif %}">
+    {% if p.outcome=="won" %}✓ Kazandı{% elif p.outcome=="lost" %}✕ Kaybetti{% elif p.status=="finished" %}Sonuç değerlendirilemedi{% else %}⏳ Bekliyor{% endif %}
+   </div>
+  </div>
+  {% if p.actual %}<p class="coupon-detail-sub">Gerçekleşen sonuç: <strong>{{p.actual}}</strong></p>{% endif %}
+  <div class="coupon-detail-footer"><span class="coupon-detail-sub">{{"Maç tamamlandı" if p.status=="finished" else "Canlı" if p.status=="live" else "Maç başlamadı"}}</span><a href="/match/{{p.id}}">Maç analizini aç →</a></div>
+ </article>
+ {% endfor %}
+ </div>{% else %}<p class="muted">Bu kuponda bahis seçimi bulunmuyor.</p>{% endif %}
+</section>
+{% endblock %}
