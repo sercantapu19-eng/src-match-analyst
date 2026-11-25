@@ -113,5 +113,46 @@ class DailyPredictionRefreshTests(unittest.TestCase):
 
 
 
+    def test_future_day_predictions_are_allowed_within_seven_days(self):
+        future_day = (
+            datetime.now(ZoneInfo("Europe/Istanbul")).date() + timedelta(days=3)
+        ).isoformat()
+        kickoff = f"{future_day}T20:00:00+03:00"
+        with application.db() as c:
+            c.execute(
+                """INSERT INTO matches(home,away,league,kickoff,status,created_at,
+                   market_probabilities,match_result)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                ("Future Home", "Future Away", "Test League", kickoff,
+                 "scheduled", "test", "{}", "")
+            )
+        calls = []
+        def fake_rebuild(c, target, history):
+            calls.append(target["id"])
+            c.execute(
+                "UPDATE matches SET market_probabilities=? WHERE id=?",
+                ('{"match_result":{"1":0.5,"X":0.25,"2":0.25}}', target["id"])
+            )
+        with patch.object(application, "prepare_history", side_effect=lambda rows: rows), \
+             patch.object(application, "rebuild_one_prediction", side_effect=fake_rebuild):
+            response = self.client.post(
+                f"/sync/predictions/refresh?date={future_day}",
+                headers={"Authorization": "Bearer prediction-sync-test-token"}, json={}
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["generated"], 1)
+        self.assertEqual(len(calls), 1)
+
+    def test_prediction_date_beyond_seven_days_is_rejected(self):
+        outside_day = (
+            datetime.now(ZoneInfo("Europe/Istanbul")).date() + timedelta(days=8)
+        ).isoformat()
+        response = self.client.post(
+            f"/sync/predictions/refresh?date={outside_day}",
+            headers={"Authorization": "Bearer prediction-sync-test-token"}, json={}
+        )
+        self.assertEqual(response.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
