@@ -230,5 +230,54 @@ class DateScopedResultSyncTests(unittest.TestCase):
         )
 
 
+    def test_future_fixture_within_seven_days_is_imported(self):
+        future_day = (
+            datetime.now(ZoneInfo("Europe/Istanbul")).date() + timedelta(days=5)
+        ).isoformat()
+        kickoff = f"{future_day}T20:00:00+03:00"
+
+        class FakeProvider:
+            def __init__(self, *args, **kwargs):
+                pass
+            @staticmethod
+            def _normalize_search_name(value):
+                return " ".join(str(value or "").casefold().replace("fc", "").split())
+            def fixtures(self, day):
+                self_day = day
+                if self_day != future_day:
+                    return []
+                return [{
+                    "id": "future-seven-day-fixture", "home": "Future Home",
+                    "away": "Future Away", "league": "Test League",
+                    "kickoff": kickoff, "status": "scheduled", "status_short": "NS",
+                    "home_goals": None, "away_goals": None,
+                }]
+
+        with patch.object(application, "FootballProvider", FakeProvider):
+            response = self.client.post(
+                f"/sync/results/refresh?date={future_day}",
+                headers={"Authorization": "Bearer date-sync-test-token"}, json={}
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["upcoming_added"], 1)
+        with application.db() as c:
+            row = c.execute(
+                "SELECT status FROM matches WHERE external_id=?",
+                ("future-seven-day-fixture",)
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "scheduled")
+
+    def test_more_than_seven_days_ahead_is_rejected(self):
+        outside_day = (
+            datetime.now(ZoneInfo("Europe/Istanbul")).date() + timedelta(days=8)
+        ).isoformat()
+        response = self.client.post(
+            f"/sync/results/refresh?date={outside_day}",
+            headers={"Authorization": "Bearer date-sync-test-token"}, json={}
+        )
+        self.assertEqual(response.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
